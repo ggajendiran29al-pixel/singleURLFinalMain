@@ -1,0 +1,31 @@
+﻿using System;
+using System.Threading.Tasks;
+using XOI_Integration.DataFactory.BaseObject;
+using XOI_Integration.DataFactory.InheritedObjects.OperationsForInheritedObjects;
+
+namespace XOI_Integration.DataFactory.InheritedObjects
+{
+    public class WorkOrder : JobRelatedData
+    {
+        public WorkOrder(Guid bookableResourceBookingId) : base(bookableResourceBookingId)
+        {
+        }
+
+        public override async Task LoadData()
+        {
+            WorkOrderOperation operation = new WorkOrderOperation(BookableResourceBookingId);
+
+            AssigneeIds = string.Join(",", await GetResourcesAsync());
+            CustomerName = await operation.WorkOrderGetCustomerInfoAsync();
+            JobLocation = await operation.WorkOrderGetJobLocationAsync();
+            OrderNumber = $"WO-{await operation.WorkOrderGetProjectNumberAsync()}";
+            Label = OrderNumber;
+            Tags = Array.Empty<string>();
+            TagSuggestions = Array.Empty<string>();
+            InternalNote =
+                string.IsNullOrEmpty(await operation.WorkOrderGetInternalNoteAsync())
+                    ? "---"
+                    : await operation.WorkOrderGetInternalNoteAsync();
+        }
+    }
+}
