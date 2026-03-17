@@ -1,10 +1,8 @@
-﻿using Google.Protobuf.WellKnownTypes;
-using GraphQL;
+﻿using GraphQL;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 using XOI_Integration.DataFactory.BaseObject;
 using XOI_Integration.DataModels.Enums;
@@ -17,332 +15,326 @@ namespace XOI_Integration.XOiRepository
 {
     public class XOiOperation
     {
-        private static readonly Dictionary<OperationType, string> requests = new Dictionary<OperationType, string>()
-        {
-            {OperationType.Create, @"mutation CreateJob(
-              $assigneeIds: [ID!]!,
-              $customerName: String!,
-              $jobLocation: String!,
-              $workOrderNumber: String!,
-              $label: String,
-              $tags: [String!],
-              $tagSuggestions: [String!],
-              $internalNoteText: String!
-            ) {
-              createJob(
-                input: {
-                  newJob: {
-                    assigneeIds: $assigneeIds
-                    customerName: $customerName
-                    jobLocation: $jobLocation
-                    workOrderNumber: $workOrderNumber
-                    label: $label
-                    tags: $tags
-                    tagSuggestions: $tagSuggestions
-                    internalNote: { text: $internalNoteText }
-                  }
-                  additionalActions: { createPublicShare: { enabled: true } }
-                }
-              ) {
-                job {
-                  id
-                  createdAt
-                  createdBy
-                  assigneeIds
-                  customerName
-                  jobLocation
-                  workOrderNumber
-                  label
-                  tags
-                  tagSuggestions
-                  deepLinks {
-                     visionWeb {
-                      viewJob {
-                        url
-                      }
-                    }
-                    visionMobile {
-                      editJob {
-                        url
-                      }
-                      jobLocationActivitySearch {
-                        url
-                      }
-                    }
-                  }
-                }
-                additionalActionsResults {
-                  createPublicShare {
-                    shareLink
-                  }
-                }
-              }
-            }" },
-            {OperationType.Update, @"mutation UpdateJob(
-              $id: ID!,
-              $customerName: String!,
-              $jobLocation: String!,
-              $workOrderNumber: String!,
-              $label: String,
-              $tags: [String!],
-              $tagSuggestions: [String!],
-              $internalNoteText: String!,
-              $assigneeIds: [ID!]!
-            ) {
-              updateJob(
-                input: {
-                  id: $id
-                  fieldUpdates: {
-                    customerName: $customerName
-                    jobLocation: $jobLocation
-                    workOrderNumber: $workOrderNumber
-                    label: $label
-                    tags: $tags
-                    tagSuggestions: $tagSuggestions
-                    internalNote: { text: $internalNoteText }
-                    assigneeIds: $assigneeIds
-                  }
-                }
-              ) {
-                job {
-                  id
-                  createdAt
-                  createdBy
-                  assigneeIds
-                  customerName
-                  jobLocation
-                  workOrderNumber
-                  label
-                  tags
-                  tagSuggestions
-                  internalNote {
-                    text
-                  }
-                  deepLinks {
-                    visionWeb {
-                      viewJob {
-                        url
-                      }
-                    }
-                    visionMobile {
-                      viewJob {
-                        url
-                      }
-                      editJob {
-                        url
-                      }
-                      jobLocationActivitySearch {
-                        url
-                      }
-                    }
-                  }
-                }
-              }
-            }" },
-            {OperationType.GetJobSummary, @"query GetJobSummary(
-              $id: ID!, $workflowId: ID) {
-              getJobSummary(input: { jobId: $id, workflowJobId: $workflowId }) {
-                nextToken
-                jobSummary {
-                  jobId
-                  documentation {
-                    workflowName
-                    traits
-                    tags
-                    note {
-                      text
-                    }
-                    choice {
-                      chosen
-                    }
-                    derivedData {
-                      make
-                      model
-                      serial
-                      transcript
-                      manufacture_date
-                    }
-                    workSummary {
-                        summary_text
-                    }
-                  }
-                  assignees {
-                    id
-                    email
-                    given_name
-                    family_name
-                  }
-                }
-              }
-            }" },
-            {OperationType.GetJob, @"query GetJob(
-                $id: ID!) {
-                getJob(input: { id: $id }) {
-                  job {
-                    id
-                    createdAt
-                    createdBy
-                    assigneeIds
-                    customerName
-                    jobLocation
-                    workOrderNumber
-                    label
-                    tags
-                    tagSuggestions
-                    deepLinks {
-                      visionWeb {
-                        viewJob {
-                          url
-                        }
-                      }
-                      visionMobile {
-                        viewJob {
-                          url
-                        }
-                        editJob {
-                          url
-                        }
-                        jobLocationActivitySearch {
-                          url
-                        }
-                      }
-                    }
-                  }
-                }
-              }" }
-        };
-
-        private Dictionary<string, GraphQLResponse<XOiJobSummaryResponse>> jobSummaryCache = new Dictionary<string, GraphQLResponse<XOiJobSummaryResponse>>();
-
-        private ILogger _log;
+        private readonly ILogger _log;
         private readonly XOiAPI _xoiAPI;
 
-        public XOiOperation(ILogger log) 
-        { 
+        private static readonly Dictionary<OperationType, string> requests =
+            new Dictionary<OperationType, string>()
+        {
+            // ======================================================
+            // CREATE JOB — includes contributeToJob + shareLink
+            // ======================================================
+            {
+                OperationType.Create,
+@"
+mutation CreateJob(
+  $assigneeIds: [ID!]!,
+  $customerName: String!,
+  $jobLocation: String!,
+  $workOrderNumber: String!,
+  $label: String,
+  $tags: [String!],
+  $tagSuggestions: [String!],
+  $internalNoteText: String!
+) {
+  createJob(
+    input: {
+      newJob: {
+        assigneeIds: $assigneeIds
+        customerName: $customerName
+        jobLocation: $jobLocation
+        workOrderNumber: $workOrderNumber
+        label: $label
+        tags: $tags
+        tagSuggestions: $tagSuggestions
+        internalNote: { text: $internalNoteText }
+      }
+      additionalActions: { createPublicShare: { enabled: true } }
+    }
+  ) {
+    job {
+      id
+      createdAt
+      assigneeIds
+      customerName
+      jobLocation
+      workOrderNumber
+      label
+
+      deepLinks {
+        visionMobile {
+          contributeToJob { url }
+          editJob { url }
+          viewJob { url }
+          jobLocationActivitySearch { url }
+        }
+        visionWeb {
+          viewJob { url }
+        }
+      }
+    }
+
+    additionalActionsResults {
+      createPublicShare {
+        shareLink
+      }
+    }
+  }
+}
+"
+            },
+
+            // ======================================================
+            // UPDATE JOB — include deepLinks (support contributeToJob)
+            // ======================================================
+            {
+                OperationType.Update,
+@"
+mutation UpdateJob(
+  $id: ID!,
+  $customerName: String!,
+  $jobLocation: String!,
+  $workOrderNumber: String!,
+  $label: String,
+  $tags: [String!],
+  $tagSuggestions: [String!],
+  $internalNoteText: String!,
+  $assigneeIds: [ID!]!
+) {
+  updateJob(
+    input: {
+      id: $id
+      fieldUpdates: {
+        customerName: $customerName
+        jobLocation: $jobLocation
+        workOrderNumber: $workOrderNumber
+        label: $label
+        tags: $tags
+        tagSuggestions: $tagSuggestions
+        internalNote: { text: $internalNoteText }
+        assigneeIds: $assigneeIds
+      }
+    }
+  ) {
+    job {
+      id
+      customerName
+      workOrderNumber
+      jobLocation
+
+      deepLinks {
+        visionMobile {
+          contributeToJob { url }
+          editJob { url }
+          viewJob { url }
+          jobLocationActivitySearch { url }
+        }
+        visionWeb {
+          viewJob { url }
+        }
+      }
+    }
+  }
+}
+"
+            },
+
+            // ======================================================
+            // GET JOB — includes contributeToJob
+            // ======================================================
+            {
+                OperationType.GetJob,
+@"
+query GetJob($id: ID!) {
+  getJob(input: { id: $id }) {
+    job {
+      id
+      customerName
+      jobLocation
+      workOrderNumber
+      assigneeIds
+
+      deepLinks {
+        visionMobile {
+          contributeToJob { url }
+          editJob { url }
+          viewJob { url }
+          jobLocationActivitySearch { url }
+        }
+        visionWeb {
+          viewJob { url }
+        }
+      }
+    }
+  }
+}
+"
+            },
+
+            // ======================================================
+            // GET JOB SUMMARY — used for Customer Assets + Booking Notes
+            // ======================================================
+            {
+                OperationType.GetJobSummary,
+@"
+query GetJobSummary($id: ID!, $workflowId: ID) {
+  getJobSummary(input: { jobId: $id, workflowJobId: $workflowId }) {
+    nextToken
+    jobSummary {
+      jobId
+      documentation {
+        workflowName
+        traits
+        tags
+        note { text }
+        choice { chosen }
+        derivedData {
+          make
+          model
+          serial
+          transcript
+          manufacture_date
+        }
+        workSummary {
+          summary_text
+        }
+      }
+      assignees {
+        id
+        email
+        given_name
+        family_name
+      }
+    }
+  }
+}
+"
+            }
+        };
+
+        private readonly Dictionary<string, GraphQLResponse<XOiJobSummaryResponse>> jobSummaryCache =
+            new Dictionary<string, GraphQLResponse<XOiJobSummaryResponse>>();
+
+        public XOiOperation(ILogger log)
+        {
             _log = log;
             _xoiAPI = new XOiAPI();
         }
 
-        public async Task<XOiToBookableResourceData> CreateJobAsync(JobRelatedData jobRelatedData)
+        // ======================================================
+        // CREATE JOB
+        // ======================================================
+        public async Task<XOiToBookableResourceData> CreateJobAsync(JobRelatedData job)
         {
             _log.LogInformation("Start create job");
 
-            var query = requests[OperationType.Create];
-            var variables = GetVariables(jobRelatedData);
+            var response = await _xoiAPI.SendRequestAsync<XOiCRUDResponse>(
+                requests[OperationType.Create],
+                GetVariables(job));
 
-            var response = await _xoiAPI.SendRequestAsync<XOiCRUDResponse>(query, variables);
-
-            _log.LogInformation("Job created");
-
-            return XOiProcessResponse.BuildXOiToBookableResourceData(_log, OperationType.Create, response);
+            return XOiProcessResponse.BuildXOiToBookableResourceData(
+                _log,
+                OperationType.Create,
+                response);
         }
 
-        public async Task<XOiToBookableResourceData> UpdateJobAsync(JobRelatedData jobRelatedData, string jobId)
+        // ======================================================
+        // UPDATE JOB
+        // ======================================================
+        public async Task<XOiToBookableResourceData> UpdateJobAsync(
+            JobRelatedData job, string jobId)
         {
             _log.LogInformation("Start update job");
 
-            var query = requests[OperationType.Update];
-            var variables = GetVariables(jobRelatedData, jobId);
+            var response = await _xoiAPI.SendRequestAsync<XOiCRUDResponse>(
+                requests[OperationType.Update],
+                GetVariables(job, jobId));
 
-            var response = await _xoiAPI.SendRequestAsync<XOiCRUDResponse>(query, variables);
-
-            _log.LogInformation("Job updated");
-
-            return XOiProcessResponse.BuildXOiToBookableResourceData(_log, OperationType.Update, response);
+            return XOiProcessResponse.BuildXOiToBookableResourceData(
+                _log,
+                OperationType.Update,
+                response);
         }
 
+        // ======================================================
+        // GET JOB INFO (used in webhook)
+        // ======================================================
         public async Task<XOiJobInfo> GetJobAsync(string jobId)
         {
             _log.LogInformation("Get Job info from XOi");
 
-            var query = requests[OperationType.GetJob];
-            var variables = new
-            {
-                id = jobId
-            };
-
-            var response = await _xoiAPI.SendRequestAsync<XOiCRUDResponse>(query, variables);
-           
+            var response = await _xoiAPI.SendRequestAsync<XOiCRUDResponse>(
+                requests[OperationType.GetJob],
+                new { id = jobId });
 
             return XOiProcessResponse.BuildXOiJobInfoData(_log, response);
         }
 
-        public async Task<List<XOiToCustomerAssetData>> GetJobSummaryAsync(string jobId, string workflowJobId)
+        // ======================================================
+        // GET JOB SUMMARY → Customer Assets
+        // ======================================================
+        public async Task<List<XOiToCustomerAssetData>> GetJobSummaryAsync(
+            string jobId, string workflowJobId)
         {
             var response = await GetJobSummaryResponseAsync(jobId, workflowJobId);
 
-            return XOiProcessResponse.BuildXOiToCustomerAssetData(_log,response);
+            return XOiProcessResponse.BuildXOiToCustomerAssetData(_log, response);
         }
 
-        public async Task<XOiWorkSummaryToBookableResourceData> GetJobSummaryWorkflowAsync(string jobId, string workflowJobId)
+        // ======================================================
+        // GET JOB SUMMARY → Work Summary Notes
+        // ======================================================
+        public async Task<XOiWorkSummaryToBookableResourceData> GetJobSummaryWorkflowAsync(
+            string jobId, string workflowJobId)
         {
             var response = await GetJobSummaryResponseAsync(jobId, workflowJobId);
 
-            return XOiProcessResponse.BuildXOiWorkSummaryToBookableResourceData(_log, response, workflowJobId);
+            return XOiProcessResponse.BuildXOiWorkSummaryToBookableResourceData(
+                _log, response, workflowJobId);
         }
 
-
-        private async Task<GraphQLResponse<XOiJobSummaryResponse>> GetJobSummaryResponseAsync(string jobId, string workflowJobId)
+        // ======================================================
+        // Internal — Job Summary Cache
+        // ======================================================
+        private async Task<GraphQLResponse<XOiJobSummaryResponse>> GetJobSummaryResponseAsync(
+            string jobId, string workflowJobId)
         {
-            _log.LogInformation("Start receiving a job summary");
-
             if (jobSummaryCache.ContainsKey(jobId))
-            {
-                _log.LogInformation("Finish receiving a job summary");
-
                 return jobSummaryCache[jobId];
-            }
 
-            var query = requests[OperationType.GetJobSummary];
-            var variables = new
-            {
-                id = jobId,
-                workflowId = workflowJobId
-            };
-
-            var response = await _xoiAPI.SendRequestAsync<XOiJobSummaryResponse>(query, variables);
+            var response = await _xoiAPI.SendRequestAsync<XOiJobSummaryResponse>(
+                requests[OperationType.GetJobSummary],
+                new { id = jobId, workflowId = workflowJobId });
 
             if (response.Data != null)
             {
-                _log.LogInformation("Job summary successfully recieved");
-
-                jobSummaryCache.Add(jobId, response);
-
-                await IntegrationLogOperation.CreateJobSummaryLogAsync(result: JobResponseResult.Success, xoiJobSummaryResponse: response.Data, jobId: jobId);
-
+                jobSummaryCache[jobId] = response;
                 return response;
             }
-            else if (response.Errors != null && response.Errors.Any()) 
-            {
-                var errorMessage = response.Errors.FirstOrDefault().Message;
 
-                await IntegrationLogOperation.CreateJobSummaryLogAsync(result: JobResponseResult.Failure, message: errorMessage, jobId: jobId);
+            if (response.Errors != null && response.Errors.Any())
+                throw new Exception(response.Errors.First().Message);
 
-                throw new Exception(errorMessage);
-            }
-
-            _log.LogError("Invalid responce recived");
-
-            throw new Exception("Invalid responce recived");
+            throw new Exception("Invalid response received.");
         }
 
-
-        private dynamic GetVariables(JobRelatedData jobRelatedData, string jobId = null)
+        // ======================================================
+        // BUILD VARIABLES FOR GRAPHQL MUTATIONS
+        // ======================================================
+        private dynamic GetVariables(JobRelatedData job, string jobId = null)
         {
-            var variables = new
+            return new
             {
                 id = jobId,
-                assigneeIds = jobRelatedData.AssigneeIds,
-                customerName = jobRelatedData.CustomerName,
-                jobLocation = jobRelatedData.JobLocation,
-                workOrderNumber = jobRelatedData.OrderNumber,
-                label = jobRelatedData.Label,
-                tags = jobRelatedData.Tags,
-                tagSuggestions = jobRelatedData.TagSuggestions,
-                internalNoteText = jobRelatedData.InternalNote
+                assigneeIds = job.AssigneeIds,
+                customerName = job.CustomerName,
+                jobLocation = job.JobLocation,
+                workOrderNumber = job.OrderNumber,
+                label = job.Label,
+                tags = job.Tags,
+                tagSuggestions = job.TagSuggestions,
+                internalNoteText = job.InternalNote
             };
-
-            return variables;
         }
     }
 }

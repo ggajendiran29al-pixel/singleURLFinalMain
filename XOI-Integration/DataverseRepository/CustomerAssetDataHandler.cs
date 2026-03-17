@@ -5,6 +5,219 @@ using Microsoft.Xrm.Sdk.Query;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
+using XOI_Integration.DataModels;
+using XOI_Integration.DataModels.Enums;
+using XOI_Integration.DataverseRepository.Operations;
+using XOI_Integration.DataverseRepository.Provider;
+using XOI_Integration.XOiRepository.XOiDataModels;
+
+namespace XOI_Integration.DataverseRepository
+{
+    public class CustomerAssetDataHandler
+    {
+        private ILogger _log;
+
+        public CustomerAssetDataHandler(ILogger log)
+        {
+            _log = log;
+        }
+
+        public async Task HandleCustomerAssetDataAsync(
+            List<XOiToCustomerAssetData> customerAssetData,
+            XOiJobInfo xOiJobInfo,
+            string jobId)
+        {
+            if (customerAssetData == null || !customerAssetData.Any())
+            {
+                _log.LogInformation("No customer assets to process.");
+                return;
+            }
+
+            _log.LogInformation($"Start processing {customerAssetData.Count} customer assets for job {jobId}");
+
+            var customerId = await CustomerAssetOperation.GetCustomerGuidAsync(_log, xOiJobInfo.CustomerName);
+            string assetCategory = Environment.GetEnvironmentVariable("DefaultAssetCategory", EnvironmentVariableTarget.Process);
+
+            foreach (var asset in customerAssetData)
+            {
+                //string assetName = $"{asset.Make} | {asset.Model} | {asset.Serial}";
+                
+                string assetName = $"{asset.Make} | {asset.Model} | {asset.Serial}".Trim();
+                _log.LogInformation($"Processing asset: {assetName}");
+                if (string.IsNullOrWhiteSpace(asset.Make)
+                    && string.IsNullOrWhiteSpace(asset.Model)
+                    && string.IsNullOrWhiteSpace(asset.Serial))
+                {
+                    _log.LogWarning("Skipping asset creation — Make, Model, and Serial are all empty.");
+                    continue;
+                }
+
+
+                // Step 1: Try to find existing asset
+                var query = new QueryExpression("msdyn_customerasset")
+                {
+                    ColumnSet = new ColumnSet("msdyn_customerassetid"),
+                    Criteria = new FilterExpression(LogicalOperator.And)
+                    {
+                        Conditions =
+        {
+            new ConditionExpression("msdyn_account", ConditionOperator.Equal, customerId),
+            new ConditionExpression("sis_serialid", ConditionOperator.Equal, asset.Serial)
+        }
+                    }
+                };
+
+
+                var existingAssets = await DataverseApi.Instance.RetrieveMultipleAsync(query);
+                Guid assetId;
+
+                if (existingAssets.Entities.Any())
+                {
+                    // Asset already exists
+                    var existingAsset = existingAssets.Entities.First();
+                    assetId = existingAsset.Id;
+
+                    _log.LogInformation($"Existing asset found: {assetName} ({assetId})");
+
+                    // Important: Pass asset ID to summary so BU update can happen later
+                    if (xOiJobInfo.WorkSummary != null)
+                        xOiJobInfo.WorkSummary.CustomerAssetId = assetId;
+
+                    if (!string.IsNullOrEmpty(asset.Transcript))
+                    {
+                        _log.LogInformation($"Updating transcript for existing asset {assetId}");
+
+                        await CustomerAssetOperation.UpdateCustomerAssetAsync(
+                            _log,
+                            new List<CustomerAssetToUpdate>
+                            {
+                                new CustomerAssetToUpdate
+                                {
+                                    AssetId = assetId,
+                                    Transcript = asset.Transcript
+                                }
+                            },
+                            xOiJobInfo.CustomerName,
+                            jobId
+                        );
+                    }
+                }
+                else
+                {
+                    // Step 2: Create new asset
+                    _log.LogInformation($"Creating new asset: {assetName}");
+
+                    Entity newAsset = new Entity("msdyn_customerasset")
+                    {
+                        ["msdyn_name"] = assetName,
+                        ["msdyn_account"] = new EntityReference("account", customerId),
+                        ["msdyn_customerassetcategory"] = new EntityReference("msdyn_customerassetcategory", Guid.Parse(assetCategory))
+                    };
+
+                    if (asset.ManufactureDate != null)
+                        newAsset["msdyn_manufacturingdate"] = asset.ManufactureDate;
+
+                    newAsset["sis_model"] = asset.Model;
+                    newAsset["sis_serialid"] = asset.Serial;
+
+                    // Step 3: Apply BU before creation
+                    _log.LogInformation("[BU] Attempting to resolve owning team for new asset");
+
+                    var bookingIds = await BookableResourceBookingOperation.GetBookableResourceBookingIdsAsync(jobId);
+
+                    if (bookingIds != null && bookingIds.Any())
+                    {
+                        var owningTeamId = await CustomerAssetOperation.GetOwningTeamFromBookingAsync(
+                            _log,
+                            bookingIds.First());
+
+                        if (owningTeamId.HasValue)
+                        {
+                            newAsset["ownerid"] = new EntityReference("team", owningTeamId.Value);
+                            _log.LogInformation($"[BU] Owning team applied: {owningTeamId.Value}");
+                        }
+                        else
+                        {
+                            _log.LogInformation("[BU] No owning team resolved. Default owner will apply.");
+                        }
+                    }
+
+                    try
+                    {
+                        // Create asset
+                        assetId = await DataverseApi.Instance.CreateAsync(newAsset);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (ex.Message.Contains("AssetNameDuplicateCheckOnPropertyLogPlugin"))
+                        {
+                            _log.LogWarning($"Duplicate detected. Skipping creation for {assetName}");
+                            continue;
+                        }
+
+                        throw;
+                    }
+
+                    // Important: Pass asset ID to summary for later BU updates
+                    if (xOiJobInfo.WorkSummary != null)
+                        xOiJobInfo.WorkSummary.CustomerAssetId = assetId;
+
+                    // Step 4: Create property logs
+                    var propertyTasks = new List<Task>
+                    {
+                        CustomerAssetOperation.SetAssetPropertyAsync(_log, AssetProperties.Make, asset.Make, assetId),
+                        CustomerAssetOperation.SetAssetPropertyAsync(_log, AssetProperties.ModelNumber, asset.Model, assetId),
+                        CustomerAssetOperation.SetAssetPropertyAsync(_log, AssetProperties.SerialNumber, asset.Serial, assetId)
+                    };
+
+                    if (!string.IsNullOrEmpty(asset.Transcript))
+                    {
+                        propertyTasks.Add(CustomerAssetOperation.SetAssetPropertyAsync(
+                            _log,
+                            AssetProperties.Transcript,
+                            asset.Transcript,
+                            assetId));
+                    }
+
+                    await Task.WhenAll(propertyTasks);
+                }
+
+                // Step 5: Associate to Work Order Incidents
+                // Associate asset ONLY to workflow booking
+    
+                /*Guid workflowBookingId =
+                    await BookableResourceBookingOperation
+                        .GetBookingIdByWorkflowJobIdAsync(xOiJobInfo.WorkflowJobId);
+
+                if (workflowBookingId != Guid.Empty)
+                {
+                    await CustomerAssetOperation.AssociateAssetToWorkOrderIncidentAsync(
+                        _log,
+                        assetId,
+                        new List<Guid> { workflowBookingId }
+                    );
+                }
+                else
+                {
+                    _log.LogWarning("No booking found for workflowJobId — asset not associated.");
+                }*/
+
+
+            }
+
+            _log.LogInformation("Finished processing all customer assets for job.");
+        }
+    }
+}
+
+/*commented 16th NOV using Microsoft.Crm.Sdk.Messages;
+using Microsoft.Extensions.Logging;
+using Microsoft.Xrm.Sdk;
+using Microsoft.Xrm.Sdk.Query;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using XOI_Integration.DataModels;
@@ -67,6 +280,11 @@ namespace XOI_Integration.DataverseRepository
                     assetId = existingAsset.Id;
 
                     _log.LogInformation($"Existing asset found: {assetName} ({assetId})");
+                    if (xOiJobInfo?.WorkSummary != null)
+                    {
+                        xOiJobInfo.WorkSummary.CustomerAssetId = assetId;
+                        _log.LogInformation($"[BU] Assigned existing AssetId {assetId} to WorkSummary.");
+                    }
 
                     if (!string.IsNullOrEmpty(asset.Transcript))
                     {
@@ -116,7 +334,49 @@ namespace XOI_Integration.DataverseRepository
                         throw;
                     }
 
-                    // 🔹 Step 3: Create Property Logs (Make, Model, Serial, Transcript)
+                    // Step 3: Apply BU before creation
+                    _log.LogInformation("[BU] Attempting to resolve owning team for new asset");
+
+                    var bookingIds = await BookableResourceBookingOperation.GetBookableResourceBookingIdsAsync(jobId);
+
+                    if (bookingIds != null && bookingIds.Any())
+                    {
+                        var owningTeamId = await CustomerAssetOperation.GetOwningTeamFromBookingAsync(
+                            _log,
+                            bookingIds.First());
+
+                        if (owningTeamId.HasValue)
+                        {
+                            newAsset["ownerid"] = new EntityReference("team", owningTeamId.Value);
+                            _log.LogInformation($"[BU] Owning team applied: {owningTeamId.Value}");
+                        }
+                        else
+                        {
+                            _log.LogInformation("[BU] No owning team resolved. Default owner will apply.");
+                        }
+                    }
+
+                    try
+                    {
+                        // Create asset
+                        assetId = await DataverseApi.Instance.CreateAsync(newAsset);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (ex.Message.Contains("AssetNameDuplicateCheckOnPropertyLogPlugin"))
+                        {
+                            _log.LogWarning($"Duplicate detected. Skipping creation for {assetName}");
+                            continue;
+                        }
+
+                        throw;
+                    }
+
+                    // Important: Pass asset ID to summary for later BU updates
+                    if (xOiJobInfo.WorkSummary != null)
+                        xOiJobInfo.WorkSummary.CustomerAssetId = assetId;
+
+                    // 🔹 Step 4: Create Property Logs (Make, Model, Serial, Transcript)
                     var propertyTasks = new List<Task>
             {
                 CustomerAssetOperation.SetAssetPropertyAsync(_log, AssetProperties.Make, asset.Make, assetId),
@@ -130,17 +390,16 @@ namespace XOI_Integration.DataverseRepository
                     await Task.WhenAll(propertyTasks);
                 }
 
-                // 🔹 Step 4: Associate asset to Work Order Incidents (Bookings)
+                // 🔹 Step 5: Associate asset to Work Order Incidents (Bookings)
                 var bookingIds = await BookableResourceBookingOperation.GetBookableResourceBookingIdsAsync(jobId);
                 await CustomerAssetOperation.AssociateAssetToWorkOrderIncidentAsync(_log, assetId, bookingIds);
             }
 
             _log.LogInformation("✅ Finished processing all customer assets for job.");
-        }
-    }
-}
+        }*/
 
-/*
+
+/* commented items
 public async Task HandleCustomerAssetDataAsync(List<XOiToCustomerAssetData> customerAssetData, XOiJobInfo xOiJobInfo, string jobId)
 {
     if (customerAssetData == null || !customerAssetData.Any())
@@ -320,7 +579,7 @@ _log.LogInformation("Finished processing all customer assets for job");
 }*/
 
 /* gg commented 16th 2 am
- * public async Task HandleCustomerAssetDataAsync(List<XOiToCustomerAssetData> customerAssetData, XOiJobInfo xOiJobInfo, string jobId)
+ * public async Task HandleCustomerAssetDataAsync(List<XOiToCustomerAssetData> customerAssetData, XOi       JobInfo xOiJobInfo, string jobId)
  {
      var customerAssetIds = await CustomerAssetOperation.GetCustomerAssetIdsAsync(_log, xOiJobInfo.CustomerName);
 

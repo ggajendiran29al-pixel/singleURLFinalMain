@@ -1,12 +1,12 @@
-﻿using System.Threading.Tasks;
+﻿using Microsoft.Extensions.Logging;
 using System;
+using System.Threading.Tasks;
 using XOI_Integration.DataFactory.BaseObject;
+using XOI_Integration.DataFactory.InheritedObjects.OperationsForInheritedObjects;
 using XOI_Integration.DataModels.Enums;
 using XOI_Integration.DataverseRepository.Operations;
 using XOI_Integration.XOiRepository;
-using Microsoft.Extensions.Logging;
 using XOI_Integration.XOiRepository.XOiDataModels;
-using XOI_Integration.XOiRepository.Provider;
 
 public class XOiToBookableResourceDataHandler
 {
@@ -17,37 +17,104 @@ public class XOiToBookableResourceDataHandler
         _log = log;
     }
 
-    public async Task<XOiToBookableResourceData> HandleXOiToBookableResourceDataAsync(OperationType operationType, JobRelatedData jobRelatedData, Guid bookableResourceBookingId, string xOiJobId)
+    public async Task<XOiToBookableResourceData> HandleXOiToBookableResourceDataAsync(
+        OperationType operationType,
+        JobRelatedData jobRelatedData,
+        Guid bookingId,
+        string existingJobId)
     {
-        var xOiToBookableResourceData = new XOiToBookableResourceData();
-        var xOiOperation = new XOiOperation(_log);
+        _log.LogInformation("▶️ XOiToBookableResourceDataHandler STARTED");
+
+        var xoiOp = new XOiOperation(_log);
+        XOiToBookableResourceData result;
 
         try
         {
-            if (operationType == OperationType.Create)
-            {
-                xOiToBookableResourceData = await xOiOperation.CreateJobAsync(jobRelatedData);
+            // ====================================================
+            // 1. CREATE or UPDATE JOB IN XOi
+            // ====================================================
+            result = (operationType == OperationType.Create)
+                ? await xoiOp.CreateJobAsync(jobRelatedData)
+                : await xoiOp.UpdateJobAsync(jobRelatedData, existingJobId);
 
-                _log.LogInformation("Update Bookable Resource Booking");
-                await BookableResourceBookingOperation.UpdateBookableResourceBookingAsync(bookableResourceBookingId, xOiToBookableResourceData);
-            }
-            else if (operationType == OperationType.Update)
+            string jobId = result.XOiVisionJobId;
+
+            if (string.IsNullOrEmpty(jobId))
+                throw new Exception("XOi Vision Job ID was not returned by API.");
+
+            _log.LogInformation($"📌 XOi JobId received: {jobId}");
+
+
+            // ====================================================
+            // 2. UPDATE WORK ORDER WITH JOB ID
+            // ====================================================
+            if (jobRelatedData.WorkOrderId != Guid.Empty)
             {
-                xOiToBookableResourceData = await xOiOperation.UpdateJobAsync(jobRelatedData, xOiJobId);
+                await WorkOrderOperation.UpdateXOiJobIdOnWorkOrderAsync(
+                    jobRelatedData.WorkOrderId,
+                    jobId
+                );
+
+                _log.LogInformation("✔ WorkOrder updated with XOi Job ID");
             }
+            else
+            {
+                _log.LogWarning("⚠ WorkOrderId was EMPTY - JobId was not stored on WorkOrder.");
+            }
+
+            // ====================================================
+            // 3. UPDATE BOOKING WITH JOB ID + URL MODEL
+            // ====================================================
+            await BookableResourceBookingOperation.UpdateXOiJobIdOnBookingAsync(
+                bookingId,
+                jobId
+            );
+
+            _log.LogInformation("✔ Booking updated with XOi Job ID");
+
+            await BookableResourceBookingOperation.UpdateBookableResourceBookingAsync(
+                bookingId,
+                result
+            );
+
+            // ====================================================
+            // 4. FIX: Only correct Contribute URL *if truly needed*
+            // ====================================================
+            string finalUrl = result.ContributeToJobUrl;
+
+            if (!string.IsNullOrEmpty(finalUrl))
+            {
+                // Only replace if URL is INVALID (XOi bug pattern)
+                if (finalUrl.Contains("my-work/contribute?jobId="))
+                {
+                    _log.LogWarning("⚠ XOi bug detected: incorrect Contribute URL format. Replacing with ViewJob URL.");
+
+                    finalUrl = result.XoiVisionWebURL;
+                }
+
+                await BookableResourceBookingOperation.UpdateWebJobUrlOnBookingAsync(
+                    bookingId,
+                    finalUrl
+                );
+
+                _log.LogInformation("✔ Correct WebJob URL saved to booking");
+            }
+
+            _log.LogInformation("✅ Handler completed SUCCESSFULLY");
         }
         catch (Exception ex)
         {
-            xOiToBookableResourceData.operationType = operationType;
-            xOiToBookableResourceData.jobResponseResult = JobResponseResult.Failure;
-            xOiToBookableResourceData.Message = ex.Message;
+            _log.LogError($"❌ XOiToBookableResourceDataHandler FAILED: {ex.Message}");
 
-            if (operationType == OperationType.Update)
+            return new XOiToBookableResourceData
             {
-                xOiToBookableResourceData.XOiVisionJobId = xOiJobId;
-            }
+                operationType = operationType,
+                jobResponseResult = JobResponseResult.Failure,
+                Message = ex.Message,
+                XOiVisionJobId = (operationType == OperationType.Update ? existingJobId : null)
+            };
         }
 
-        return xOiToBookableResourceData;
+        return result;
     }
 }

@@ -21,6 +21,8 @@ namespace XOI_Integration.DataFactory.BaseObject
 
         protected Guid BookableResourceBookingId;
 
+        public Guid WorkOrderId { get; set; }
+
         protected JobRelatedData(Guid bookableResourceBookingId)
         {
             BookableResourceBookingId = bookableResourceBookingId;

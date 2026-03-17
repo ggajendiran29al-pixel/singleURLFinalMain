@@ -10,10 +10,12 @@ namespace XOI_Integration.XOiRepository.XOiDataModels
 {
     public class XOiToBookableResourceData
     {
-        public string XOiVisionJobId { get; set; }
-        public string XoiVisionJobURL { get; set; }
-        public string XoiVisionJobShareURL { get; set; }
-        public string XoiVisionWebURL { get; set; } 
+        public string XOiVisionJobId { get; set; }              // Raw job ID (cjob-xxxx)
+        public string XoiVisionJobURL { get; set; }             // View Job URL (VisionWeb.ViewJob.Url)
+        public string XoiVisionJobShareURL { get; set; }        // Public share URL
+        public string XoiVisionWebURL { get; set; }             // View Job URL (fallback)
+        public string ContributeToJobUrl { get; set; }          // The preferred URL
+
         public JobResponseResult jobResponseResult { get; set; }
         public OperationType operationType { get; set; }
         public string Message { get; set; }

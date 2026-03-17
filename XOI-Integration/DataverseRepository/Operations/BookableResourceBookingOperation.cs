@@ -8,256 +8,386 @@ using Microsoft.Xrm.Sdk.Query;
 using XOI_Integration.DataModels;
 using XOI_Integration.DataverseRepository.Provider;
 using XOI_Integration.XOiRepository.XOiDataModels;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+
 
 namespace XOI_Integration.DataverseRepository.Operations
 {
     public static class BookableResourceBookingOperation
     {
-        public static async Task UpdateBookableResourceBookingAsync(Guid bookableResourceBookingId, XOiToBookableResourceData xOiToBookableResourceData)
+        // =========================================================
+        // CORE UPDATE (From full XOi object)
+        // =========================================================
+        public static async Task UpdateBookableResourceBookingAsync(Guid id, XOiToBookableResourceData x)
         {
-            Entity bookableResource = new Entity("bookableresourcebooking")
-            {
-                Id = bookableResourceBookingId
-            };
+            Entity entity = new Entity("bookableresourcebooking") { Id = id };
 
-            bookableResource["sisps_xoi_vision_jobid"] = xOiToBookableResourceData.XOiVisionJobId;
-            bookableResource["sisps_xoi_vision_joburl"] = xOiToBookableResourceData.XoiVisionJobURL;
-            bookableResource["sisps_xoi_vision_jobshareurl"] = xOiToBookableResourceData.XoiVisionJobShareURL;
-            bookableResource["sisps_xoi_vision_webjoburl"] = xOiToBookableResourceData.XoiVisionWebURL;
+            entity["sisps_xoi_vision_jobid"] = x.XOiVisionJobId;
+            entity["sisps_xoi_vision_joburl"] = x.XoiVisionJobURL;
+            entity["sisps_xoi_vision_jobshareurl"] = x.XoiVisionJobShareURL;
 
-            await DataverseApi.Instance.UpdateAsync(bookableResource);
+            string finalWebUrl =
+                !string.IsNullOrEmpty(x.ContributeToJobUrl)
+                    ? x.ContributeToJobUrl
+                    : x.XoiVisionWebURL;
+
+            entity["sisps_xoi_vision_webjoburl"] = finalWebUrl;
+
+            await DataverseApi.Instance.UpdateAsync(entity);
         }
 
-        public static async Task UpdateBookableResourceBookingNoteAsync(ILogger _log, XOiWorkSummaryToBookableResourceData xOiWorkSummary, Guid noteId, string jobId)
+        // =========================================================
+        // UPDATE JOB ID ON WORK ORDER 
+        // =========================================================
+        public static async Task UpdateXOiJobIdOnWorkOrderAsync(Guid workOrderId, string xOiJobId)
         {
-            _log.LogInformation("Start updating Bookable Resource Booking Timeline");
-
-            var bookingIds = await GetBookableResourceBookingIdsAsync(jobId);
-
-            foreach (var bookableResourceBookingId in bookingIds)
-            {
-                string customerJobshareLink = await GetBookableResourceBookingCustomerJobShareLinkAsync(bookableResourceBookingId);
-
-                _log.LogInformation($"Updating Note ID {noteId} for Booking ID {bookableResourceBookingId} | Workflow: {xOiWorkSummary.WorkflowName} | Summary: {xOiWorkSummary.WorkSummary}");
-
-                Entity note = new Entity("msdyn_bookableresourcebookingquicknote")
-                {
-                    Id = noteId
-                };
-
-                note["msdyn_quicknote_lookup_entity"] = new EntityReference("bookableresourcebooking", bookableResourceBookingId);
-                note["msdyn_text"] = $"[{xOiWorkSummary.WorkflowName}] Summary from ({xOiWorkSummary.UserInitial}) {xOiWorkSummary.WorkSummary}" +
-                                     $"{Environment.NewLine}{customerJobshareLink}";
-
-                await DataverseApi.Instance.UpdateAsync(note);
-
-                _log.LogInformation($"Finished updating note for booking ID {bookableResourceBookingId}");
-            }
-
-            _log.LogInformation("Finish updating Bookable Resource Booking Notes");
-        }
-
-        public static async Task CreateBookableResourceBookingNoteAsync(ILogger _log, XOiWorkSummaryToBookableResourceData xOiWorkSummary, string jobId)
-        {
-            _log.LogInformation("Start creating Bookable Resource Booking Timeline");
-
-            var bookingIds = await GetBookableResourceBookingIdsAsync(jobId);
-
-            foreach (var bookableResourceBookingId in bookingIds)
-            {
-                //gg update Fetch existing notes
-                var existingNotes = await GetBookableResourceBookingNotes(jobId);
-                string customerJobshareLink = await GetBookableResourceBookingCustomerJobShareLinkAsync(bookableResourceBookingId);
-
-                // Build the note text exactly how it will be created
-                var newNote = $"[{xOiWorkSummary.WorkflowName}] Summary from ({xOiWorkSummary.UserInitial}): {xOiWorkSummary.WorkSummary}" +
-                              $"{Environment.NewLine}{customerJobshareLink}";
-
-                // Check if note already exists (avoid duplicates)
-                if (existingNotes.Any(n => NoteEquals(n.Note, newNote)))
-                {
-                    _log.LogInformation($"✅ Skipping duplicate note for Booking ID {bookableResourceBookingId}");
-                    continue;
-                }
-
-                // Create the note if it does not exist
-                _log.LogInformation($"Creating Note for Booking ID {bookableResourceBookingId} | Workflow: {xOiWorkSummary.WorkflowName} | Summary: {xOiWorkSummary.WorkSummary}");
-
-                Entity note = new Entity("msdyn_bookableresourcebookingquicknote")
-                {
-                    ["msdyn_quicknote_lookup_entity"] = new EntityReference("bookableresourcebooking", bookableResourceBookingId),
-                    ["msdyn_text"] = newNote
-                };
-
-                await DataverseApi.Instance.CreateAsync(note);
-
-                _log.LogInformation($"Finished creating note for booking ID {bookableResourceBookingId}");
-            }
-
-            _log.LogInformation("Finish creating Bookable Resource Booking Notes");
-        }
-        /*public static async Task CreateBookableResourceBookingNoteAsync(
-    ILogger _log,
-    XOiWorkSummaryToBookableResourceData xOiWorkSummary,
-    string jobId)
-        {
-            _log.LogInformation($"[XOI] Start creating Bookable Resource Booking Timeline for JobID: {jobId}");
-
-            Guid bookableResourceBookingId = await GetBookableResourceBookingIdAsync(jobId);
-            _log.LogInformation($"[XOI] Resolved Booking ID: {bookableResourceBookingId}");
-
-            string customerJobshareLink = await GetBookableResourceBookingCustomerJobShareLinkAsync(bookableResourceBookingId);
-            _log.LogInformation($"[XOI] Customer Share Link: {customerJobshareLink ?? "null"}");
-
-            // Diagnostic — Log hash of note content for deduplication analysis
-            string noteContent = $"[{xOiWorkSummary.WorkflowName}] Summary from ({xOiWorkSummary.UserInitial}): {xOiWorkSummary.WorkSummary}{Environment.NewLine}{customerJobshareLink}";
-            string noteHash = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(noteContent.Substring(0, Math.Min(50, noteContent.Length))));
-            _log.LogInformation($"[XOI] Note Hash (first 50 chars): {noteHash}");
-
-            // Optional: Add deduplication check before creating
-            var existingNotes = await GetBookableResourceBookingNotes(jobId);
-            if (existingNotes.Any(n => n.Note == noteContent))
-            {
-                _log.LogWarning($"[XOI] Duplicate note detected for JobID: {jobId}, skipping creation.");
+            if (workOrderId == Guid.Empty || string.IsNullOrEmpty(xOiJobId))
                 return;
-            }
 
-            Entity note = new Entity("msdyn_bookableresourcebookingquicknote")
+            Entity wo = new Entity("msdyn_workorder") { Id = workOrderId };
+            wo["acl_xoi_vision_jobid"] = xOiJobId;
+
+            await Task.Run(() => DataverseApi.Instance.Update(wo));
+        }
+        // =========================================================
+        // UPDATE WORKFLOW JOB ID ON BOOKING
+        // =========================================================
+        public static async Task UpdateWorkflowJobIdOnBookingAsync(Guid bookingId, string workflowJobId)
+        {
+            if (bookingId == Guid.Empty || string.IsNullOrEmpty(workflowJobId))
+                return;
+
+            Entity entity = new Entity("bookableresourcebooking")
             {
-                ["msdyn_quicknote_lookup_entity"] = new EntityReference("bookableresourcebooking", bookableResourceBookingId),
-                ["msdyn_text"] = noteContent
+                Id = bookingId
             };
 
-            _log.LogInformation($"[XOI] Sending note create request to Dataverse...");
+            // Save workflowJobId to custom field
+            entity["acl_xoi_workflowjobid"] = workflowJobId;
 
-            try
-            {
-                await DataverseApi.Instance.CreateAsync(note);
-                _log.LogInformation($"[XOI] Note successfully created in Dataverse for BookingID: {bookableResourceBookingId}");
-            }
-            catch (Exception ex)
-            {
-                _log.LogError($"[XOI] ERROR creating note: {ex.Message}\n{ex.StackTrace}");
-                throw;
-            }
-
-            _log.LogInformation($"[XOI] Finish creating Bookable Resource Booking Note for JobID: {jobId}");
+            await DataverseApi.Instance.UpdateAsync(entity);
         }
-*/
-        /* public static async Task CreateBookableResourceBookingNoteAsync(
-     ILogger _log,
-     XOiWorkSummaryToBookableResourceData xOiWorkSummary,
-     string jobId)
-         {
-             _log.LogInformation($"[XOI] Start creating Bookable Resource Booking Timeline for JobID: {jobId}");
 
-             var bookingIds = await GetBookableResourceBookingIdsAsync(jobId);
-             if (bookingIds == null || !bookingIds.Any())
-             {
-                 _log.LogWarning($"[XOI] No bookings found for job {jobId}");
-                 return;
-             }
 
-             foreach (var bookingId in bookingIds)
-             {
-                 string customerJobshareLink = await GetBookableResourceBookingCustomerJobShareLinkAsync(bookingId);
-                 var newNoteText = $"[{xOiWorkSummary.WorkflowName}] Summary from ({xOiWorkSummary.UserInitial}): {xOiWorkSummary.WorkSummary}{Environment.NewLine}{customerJobshareLink}";
-
-                 // 🔹 Fetch notes only for this booking (not all)
-                 QueryExpression query = new QueryExpression("msdyn_bookableresourcebookingquicknote")
-                 {
-                     ColumnSet = new ColumnSet("msdyn_text"),
-                     Criteria = new FilterExpression
-                     {
-                         Conditions =
-                 {
-                     new ConditionExpression("msdyn_quicknote_lookup_entity", ConditionOperator.Equal, bookingId)
-                 }
-                     }
-                 };
-                 var existingNotes = await DataverseApi.Instance.RetrieveMultipleAsync(query);
-                 bool noteExists = existingNotes.Entities.Any(e => NoteEquals(e.GetAttributeValue<string>("msdyn_text"), newNoteText));
-
-                 if (noteExists)
-                 {
-                     _log.LogInformation($"✅ Skipping duplicate note for booking {bookingId} (already exists).");
-                     continue;
-                 }
-
-                 // Create new note
-                 _log.LogInformation($"🆕 Creating note for Booking {bookingId}");
-                 Entity note = new Entity("msdyn_bookableresourcebookingquicknote")
-                 {
-                     ["msdyn_quicknote_lookup_entity"] = new EntityReference("bookableresourcebooking", bookingId),
-                     ["msdyn_text"] = newNoteText
-                 };
-
-                 await DataverseApi.Instance.CreateAsync(note);
-                 _log.LogInformation($"✅ Note created for Booking {bookingId}");
-             }
-
-             _log.LogInformation($"[XOI] Finish creating Bookable Resource Booking Note for JobID: {jobId}");
-         }*/
-
-        public static async Task<string> GetXOiJobIdAsync(Guid bookableResourceBookingId)
+        // =========================================================
+        // UPDATE JOB ID ON BOOKING — FULL OBJECT 
+        // =========================================================
+        public static async Task UpdateXOiJobIdOnBookingAsync(Guid bookingId, XOiToBookableResourceData x)
         {
-            QueryExpression query = new QueryExpression("bookableresourcebooking")
+            if (bookingId == Guid.Empty || x == null)
+                return;
+
+            string finalUrl =
+                !string.IsNullOrEmpty(x.ContributeToJobUrl)
+                    ? x.ContributeToJobUrl
+                    : x.XoiVisionWebURL;
+
+            Entity entity = new Entity("bookableresourcebooking")
             {
-                ColumnSet = new ColumnSet("sisps_xoi_vision_jobid"),
+                Id = bookingId,
+                ["sisps_xoi_vision_jobid"] = x.XOiVisionJobId,
+                ["sisps_xoi_vision_webjoburl"] = finalUrl,
+                ["sisps_xoi_vision_joburl"] = x.XoiVisionJobURL,
+                ["sisps_xoi_vision_jobshareurl"] = x.XoiVisionJobShareURL
+            };
+
+            await DataverseApi.Instance.UpdateAsync(entity);
+        }
+
+        // =========================================================
+        // UPDATE JOB ID ON BOOKING — STRING VERSION
+        // =========================================================
+        public static async Task UpdateXOiJobIdOnBookingAsync(Guid bookingId, string jobId)
+        {
+            if (bookingId == Guid.Empty || string.IsNullOrEmpty(jobId))
+                return;
+
+            Entity entity = new Entity("bookableresourcebooking") { Id = bookingId };
+            entity["sisps_xoi_vision_jobid"] = jobId;
+
+            await DataverseApi.Instance.UpdateAsync(entity);
+        }
+
+
+        // =========================================================
+        // GET WEB URL
+        // =========================================================
+        public static async Task<string> GetWebJobUrlAsync(Guid bookingId)
+        {
+            var entity = await Task.Run(() =>
+                DataverseApi.Instance.Retrieve(
+                    "bookableresourcebooking",
+                    bookingId,
+                    new ColumnSet("sisps_xoi_vision_webjoburl")
+                ));
+
+            return entity?.GetAttributeValue<string>("sisps_xoi_vision_webjoburl");
+        }
+
+        // =========================================================
+        // UPDATE WEB URL
+        // =========================================================
+        public static async Task UpdateWebJobUrlOnBookingAsync(Guid bookingId, string jobId)
+        {
+            if (bookingId == Guid.Empty || string.IsNullOrEmpty(jobId))
+                return;
+
+            string finalUrl =
+                jobId.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                    ? jobId
+                    : $"https://visionweb.xoi.io/jobactivity/{jobId}";
+
+            Entity entity = new Entity("bookableresourcebooking") { Id = bookingId };
+            entity["sisps_xoi_vision_webjoburl"] = finalUrl;
+
+            await DataverseApi.Instance.UpdateAsync(entity);
+        }
+
+        // =========================================================
+        // UPDATE SHARE URL
+        // =========================================================
+        public static async Task UpdateJobShareUrlOnBookingAsync(Guid bookingId, string shareUrl)
+        {
+            if (bookingId == Guid.Empty || string.IsNullOrEmpty(shareUrl))
+                return;
+
+            Entity entity = new Entity("bookableresourcebooking") { Id = bookingId };
+            entity["sisps_xoi_vision_jobshareurl"] = shareUrl;
+
+            await DataverseApi.Instance.UpdateAsync(entity);
+        }
+
+        // =========================================================
+        // PRIMARY JOB ID RESOLUTION
+        // =========================================================
+        public static async Task<string> GetXOiJobIdAsync(Guid bookingId)
+        {
+            var booking = await Task.Run(() =>
+                DataverseApi.Instance.Retrieve(
+                    "bookableresourcebooking",
+                    bookingId,
+                    new ColumnSet("sisps_xoi_vision_jobid", "msdyn_workorder")
+                ));
+
+            if (booking.Contains("sisps_xoi_vision_jobid"))
+                return (string)booking["sisps_xoi_vision_jobid"];
+
+            if (booking.Contains("msdyn_workorder"))
+            {
+                Guid woId = booking.GetAttributeValue<EntityReference>("msdyn_workorder").Id;
+
+                var workOrder = await Task.Run(() =>
+                    DataverseApi.Instance.Retrieve(
+                        "msdyn_workorder",
+                        woId,
+                        new ColumnSet("acl_xoi_vision_jobid")
+                    ));
+
+                if (workOrder?.Contains("acl_xoi_vision_jobid") == true)
+                    return (string)workOrder["acl_xoi_vision_jobid"];
+            }
+
+            return null;
+        }
+
+        // =========================================================
+        // GET NOTES FOR THIS SPECIFIC BOOKING (NEW FIX)
+        // =========================================================
+        public static async Task<List<BookableResourceBookingNote>> GetNotesForBookingAsync(Guid bookingId)
+        {
+            QueryExpression query = new QueryExpression("msdyn_bookableresourcebookingquicknote")
+            {
+                ColumnSet = new ColumnSet("msdyn_text"),
                 Criteria = new FilterExpression
                 {
                     Conditions =
                     {
-                        new ConditionExpression("bookableresourcebookingid", ConditionOperator.Equal, bookableResourceBookingId)
+                        new ConditionExpression(
+                            "msdyn_quicknote_lookup_entity",
+                            ConditionOperator.Equal,
+                            bookingId
+                        )
                     }
                 }
             };
 
-            var response = await DataverseApi.Instance.RetrieveMultipleAsync(query);
-            return response.Entities.FirstOrDefault()?.GetAttributeValue<string>("sisps_xoi_vision_jobid");
+            var result = await DataverseApi.Instance.RetrieveMultipleAsync(query);
+
+            return result.Entities
+                .Select(e => new BookableResourceBookingNote
+                {
+                    Note = e.GetAttributeValue<string>("msdyn_text"),
+                    NoteId = e.Id
+                })
+                .ToList();
         }
 
-        public static async Task<List<BookableResourceBookingTimeline>> GetBookableResourceBookingTimelines(string jobId)
+        // =========================================================
+        // NOTE CREATION WITH FIXED DUPLICATE CHECK
+        // =========================================================
+        public static async Task CreateBookableResourceBookingNoteAsync(
+    ILogger log,
+    XOiWorkSummaryToBookableResourceData summary,
+    string jobId,
+    string workflowJobId)
         {
-            var bookingIds = await GetBookableResourceBookingIdsAsync(jobId);
-            List<BookableResourceBookingTimeline> timelines = new List<BookableResourceBookingTimeline>();
+            log.LogInformation("Start creating notes (workflow-specific)");
 
-            foreach (var bookableResourceBookingId in bookingIds)
+            // 1️⃣ Find correct booking via workflowJobId
+            Guid currentBookingId = await GetBookingIdByWorkflowJobIdAsync(workflowJobId);
+
+            if (currentBookingId == Guid.Empty)
             {
-                QueryExpression query = new QueryExpression("annotation")
-                {
-                    ColumnSet = new ColumnSet("subject", "notetext"),
-                    Criteria = new FilterExpression
-                    {
-                        Conditions =
-                        {
-                            new ConditionExpression("objectid", ConditionOperator.Equal, bookableResourceBookingId)
-                        }
-                    }
-                };
-
-                var response = await DataverseApi.Instance.RetrieveMultipleAsync(query);
-
-                foreach (var entity in response.Entities)
-                {
-                    timelines.Add(new BookableResourceBookingTimeline
-                    {
-                        Title = entity.GetAttributeValue<string>("subject"),
-                        Timelinetext = entity.GetAttributeValue<string>("notetext"),
-                        TimelineId = entity.GetAttributeValue<Guid>("annotationid")
-                    });
-                }
+                log.LogWarning($"No booking found for workflowJobId '{workflowJobId}' — skipping note.");
+                return;
             }
 
-            return timelines;
+            // 2️⃣ Load notes only for this booking
+            var existingNotes = await GetBookableResourceBookingNotesForSingleBooking(currentBookingId);
+
+            string shareLink = await GetBookableResourceBookingCustomerJobShareLinkAsync(currentBookingId);
+            //commented to be removed//22Jan2026
+            /* var techName =
+     GetTechnicianInitialFromBooking(currentBookingId) ?? summary.UserInitial;
+
+             log.LogInformation(
+                 $"Technician name for booking {currentBookingId}: {techName}");
+
+             string noteText =
+                 $"[{summary.WorkflowName}] Summary from ({techName}): {summary.WorkSummary}"
+                 + Environment.NewLine
+                 + shareLink;
+
+
+             if (existingNotes.Any(n => NoteEquals(n.Note, noteText)))
+             {
+                 log.LogInformation($"Duplicate note detected for booking {currentBookingId} — skipped.");
+                 return;
+             }
+
+             // 3️⃣ Create note ONLY for correct booking
+             Entity note = new Entity("msdyn_bookableresourcebookingquicknote")
+             {
+                 ["msdyn_quicknote_lookup_entity"] = new EntityReference(
+                     "bookableresourcebooking", currentBookingId),
+                 ["msdyn_text"] = noteText
+             };
+
+             await DataverseApi.Instance.CreateAsync(note);*/
+            //Set Owner for Notes so BU is Set
+            var tech = GetTechnicianInfoFromBooking(currentBookingId);
+
+            var techName = tech.FullName ?? summary.UserInitial;
+            log.LogInformation($"Technician for booking {currentBookingId}: {techName} (UserId: {tech.UserId})");
+
+            Entity note = new Entity("msdyn_bookableresourcebookingquicknote")
+            {
+                ["msdyn_quicknote_lookup_entity"] = new EntityReference("bookableresourcebooking", currentBookingId),
+                ["msdyn_text"] = $"[{summary.WorkflowName}] Summary from ({techName}): {summary.WorkSummary}"
+                                 + Environment.NewLine
+                                 + shareLink
+            };
+
+            // ✅ Set owner so BU is correct
+            if (tech.UserId.HasValue && tech.UserId.Value != Guid.Empty)
+            {
+                note["ownerid"] = new EntityReference("systemuser", tech.UserId.Value);
+            }
+
+            await DataverseApi.Instance.CreateAsync(note);
+
+            log.LogInformation($"Note created for booking {currentBookingId}");
         }
 
+        /*  public static async Task CreateBookableResourceBookingNoteAsync(
+        ILogger log,
+        XOiWorkSummaryToBookableResourceData summary,
+        string jobId)
+          {
+              log.LogInformation("Start creating notes");
+
+              //  Determine the CURRENT booking based on workflow event
+              // The webhook ALWAYS contains exactly ONE booking associated with the job summary.
+              Guid currentBookingId = await GetBookableResourceBookingIdAsync(jobId);
+
+
+              if (currentBookingId == Guid.Empty)
+              {
+                  log.LogWarning("No matching booking found for workflowJobId — note skipped.");
+                  return;
+              }
+
+              if (currentBookingId == Guid.Empty)
+              {
+                  log.LogWarning("No BRB found for JobId, note not created.");
+                  return;
+              }
+
+              //  Only load existing notes for THIS ONE booking
+              var existingNotes = await GetBookableResourceBookingNotesForSingleBooking(currentBookingId);
+
+              string shareLink = await GetBookableResourceBookingCustomerJobShareLinkAsync(currentBookingId);
+
+              string noteText =
+                  $"[{summary.WorkflowName}] Summary from ({summary.UserInitial}): {summary.WorkSummary}"
+                  + Environment.NewLine
+                  + shareLink;
+
+              // Check duplicate for this booking only
+              if (existingNotes.Any(n => NoteEquals(n.Note, noteText)))
+              {
+                  log.LogInformation($"Skipping duplicate note for booking {currentBookingId}");
+                  return;
+              }
+
+              //  Create note ONLY for current booking
+              Entity note = new Entity("msdyn_bookableresourcebookingquicknote")
+              {
+                  ["msdyn_quicknote_lookup_entity"] =
+                      new EntityReference("bookableresourcebooking", currentBookingId),
+
+                  ["msdyn_text"] = noteText
+              };
+
+              await DataverseApi.Instance.CreateAsync(note);
+              log.LogInformation($"Note created for booking {currentBookingId}");
+
+              log.LogInformation("Finish creating Bookable Resource Booking Notes");
+          }*/
+        public static async Task<List<BookableResourceBookingNote>> GetBookableResourceBookingNotesForSingleBooking(Guid bookingId)
+        {
+            QueryExpression query = new QueryExpression("msdyn_bookableresourcebookingquicknote")
+            {
+                ColumnSet = new ColumnSet("msdyn_text"),
+                Criteria = new FilterExpression
+                {
+                    Conditions =
+            {
+                new ConditionExpression("msdyn_quicknote_lookup_entity", ConditionOperator.Equal, bookingId)
+            }
+                }
+            };
+
+            var result = await DataverseApi.Instance.RetrieveMultipleAsync(query);
+
+            return result.Entities.Select(e => new BookableResourceBookingNote
+            {
+                Note = e.GetAttributeValue<string>("msdyn_text"),
+                NoteId = e.Id
+            }).ToList();
+        }
+
+
+        // =========================================================
+        // GET ALL NOTES FOR JOB (unchanged)
+        // =========================================================
         public static async Task<List<BookableResourceBookingNote>> GetBookableResourceBookingNotes(string jobId)
         {
             var bookingIds = await GetBookableResourceBookingIdsAsync(jobId);
-            List<BookableResourceBookingNote> notes = new List<BookableResourceBookingNote>();
+            List<BookableResourceBookingNote> notes = new();
 
-            foreach (var bookableResourceBookingId in bookingIds)
+            foreach (var bookingId in bookingIds)
             {
                 QueryExpression query = new QueryExpression("msdyn_bookableresourcebookingquicknote")
                 {
@@ -266,58 +396,175 @@ namespace XOI_Integration.DataverseRepository.Operations
                     {
                         Conditions =
                         {
-                            new ConditionExpression("msdyn_quicknote_lookup_entity", ConditionOperator.Equal, bookableResourceBookingId)
+                            new ConditionExpression("msdyn_quicknote_lookup_entity", ConditionOperator.Equal, bookingId)
                         }
                     }
                 };
 
-                var response = await DataverseApi.Instance.RetrieveMultipleAsync(query);
+                var result = await DataverseApi.Instance.RetrieveMultipleAsync(query);
 
-                foreach (var entity in response.Entities)
-                {
-                    notes.Add(new BookableResourceBookingNote
+                notes.AddRange(
+                    result.Entities.Select(e => new BookableResourceBookingNote
                     {
-                        Note = entity.GetAttributeValue<string>("msdyn_text"),
-                        NoteId = entity.GetAttributeValue<Guid>("msdyn_bookableresourcebookingquicknoteid")
-                    });
-                }
+                        Note = e.GetAttributeValue<string>("msdyn_text"),
+                        NoteId = e.Id
+                    }));
             }
 
             return notes;
         }
 
-
-        public static async Task CopyJobDetailsToCurrentAsync(Guid currentBookableResourceBookingId, Guid copyFromBookableResourceBookingId)
+        // =========================================================
+        // COPY JOB DETAILS ACROSS BOOKINGS
+        // =========================================================
+        public static async Task CopyJobDetailsToCurrentAsync(
+    Guid currentBookingId,
+    Guid sourceBookingId)
         {
-            var query = new QueryExpression("bookableresourcebooking")
+            QueryExpression query = new QueryExpression("bookableresourcebooking")
             {
-                ColumnSet = new ColumnSet("sisps_xoi_vision_jobid", "sisps_xoi_vision_jobshareurl", "sisps_xoi_vision_webjoburl", "sisps_xoi_vision_joburl"),
+                ColumnSet = new ColumnSet(
+                    "sisps_xoi_vision_jobid",
+                    "sisps_xoi_vision_jobshareurl",
+                    "sisps_xoi_vision_webjoburl",
+                    "sisps_xoi_vision_joburl"
+                ),
                 Criteria = new FilterExpression
                 {
                     Conditions =
-                    {
-                        new ConditionExpression("bookableresourcebookingid", ConditionOperator.Equal, copyFromBookableResourceBookingId)
-                    }
+            {
+                new ConditionExpression(
+                    "bookableresourcebookingid",
+                    ConditionOperator.Equal,
+                    sourceBookingId)
+            }
                 }
             };
 
             var response = await DataverseApi.Instance.RetrieveMultipleAsync(query);
-            var resourceToCopyFrom = response.Entities.FirstOrDefault();
+            var source = response.Entities.FirstOrDefault();
+            if (source == null) return;
 
-            if (resourceToCopyFrom == null) return;
-
-            var updateEntity = new Entity("bookableresourcebooking", currentBookableResourceBookingId)
+            Entity update = new Entity("bookableresourcebooking", currentBookingId)
             {
-                ["sisps_xoi_vision_jobid"] = resourceToCopyFrom.GetAttributeValue<string>("sisps_xoi_vision_jobid"),
-                ["sisps_xoi_vision_jobshareurl"] = resourceToCopyFrom.GetAttributeValue<string>("sisps_xoi_vision_jobshareurl"),
-                ["sisps_xoi_vision_webjoburl"] = resourceToCopyFrom.GetAttributeValue<string>("sisps_xoi_vision_webjoburl"),
-                ["sisps_xoi_vision_joburl"] = resourceToCopyFrom.GetAttributeValue<string>("sisps_xoi_vision_joburl")
+                ["sisps_xoi_vision_jobid"] =
+                    source.GetAttributeValue<string>("sisps_xoi_vision_jobid"),
+
+                ["sisps_xoi_vision_jobshareurl"] =
+                    source.GetAttributeValue<string>("sisps_xoi_vision_jobshareurl"),
+
+                ["sisps_xoi_vision_webjoburl"] =
+                    source.GetAttributeValue<string>("sisps_xoi_vision_webjoburl")
             };
 
-            await DataverseApi.Instance.UpdateAsync(updateEntity);
+            //  Replace ONLY owner email in job URL
+            string sourceJobUrl =
+                source.GetAttributeValue<string>("sisps_xoi_vision_joburl");
+
+            if (!string.IsNullOrWhiteSpace(sourceJobUrl))
+            {
+                string updatedJobUrl =
+                     ReplaceOwnerInVisionJobUrl(
+                        sourceJobUrl,
+                        currentBookingId);
+
+                update["sisps_xoi_vision_joburl"] = updatedJobUrl;
+            }
+
+            await DataverseApi.Instance.UpdateAsync(update);
         }
-        //gg change to public
-        public static async Task<string> GetBookableResourceBookingCustomerJobShareLinkAsync(Guid bookableResourceBookingId)
+
+        //Replace ONLY the owner in payload
+        private static string ReplaceOwnerInVisionJobUrl(
+     string jobUrl,
+     Guid bookingId)
+        {
+            const string payloadKey = "?payload=";
+
+            int payloadIndex =
+                jobUrl.IndexOf(payloadKey, StringComparison.OrdinalIgnoreCase);
+
+            if (payloadIndex < 0)
+                return jobUrl;
+
+            string baseUrl = jobUrl.Substring(0, payloadIndex);
+            string encodedPayload =
+                jobUrl.Substring(payloadIndex + payloadKey.Length);
+
+            string jsonPayload =
+                Uri.UnescapeDataString(encodedPayload);
+
+            // ✅ SAFE JSON PARSE (Newtonsoft)
+            JObject payload = JObject.Parse(jsonPayload);
+
+            //to be removed Commented 22012026//string email = GetTechnicianEmailFromBooking(bookingId);
+            string email = GetTechnicianInfoFromBooking(bookingId).Email;
+
+            if (string.IsNullOrWhiteSpace(email))
+                return jobUrl;
+
+            string existingOwner = payload["owner"]?.ToString();
+
+            // ✅ LOOP BREAK / IDEMPOTENCY
+            if (string.Equals(existingOwner, email, StringComparison.OrdinalIgnoreCase))
+                return jobUrl;
+
+            // Replace ONLY owner
+            payload["owner"] = email;
+
+            string newJson = payload.ToString(Formatting.None);
+            string newEncodedPayload =
+                Uri.EscapeDataString(newJson);
+
+            return $"{baseUrl}?payload={newEncodedPayload}";
+        }
+
+
+        //to be removed Commented 22012026//
+        /*    //Resolve technician email
+            private static string GetTechnicianEmailFromBooking(Guid bookingId)
+            {
+                // 1️⃣ Booking → Resource (correct logical name: resource)
+                var booking = DataverseApi.Instance.Retrieve(
+                    "bookableresourcebooking",
+                    bookingId,
+                    new ColumnSet("resource")
+                );
+
+                var resourceRef =
+                    booking.GetAttributeValue<EntityReference>("resource");
+                if (resourceRef == null)
+                    return null;
+
+                // 2️⃣ Resource → User
+                var resource = DataverseApi.Instance.Retrieve(
+                    "bookableresource",
+                    resourceRef.Id,
+                    new ColumnSet("userid")
+                );
+
+                var userRef =
+                    resource.GetAttributeValue<EntityReference>("userid");
+                if (userRef == null)
+                    return null;
+
+                // 3️⃣ User → Email
+                var user = DataverseApi.Instance.Retrieve(
+                    "systemuser",
+                    userRef.Id,
+                    new ColumnSet("internalemailaddress")
+                );
+
+                return user.GetAttributeValue<string>("internalemailaddress");
+            }
+
+    */
+
+
+        // =========================================================
+        // CUSTOMER JOB SHARE LINK
+        // =========================================================
+        public static async Task<string> GetBookableResourceBookingCustomerJobShareLinkAsync(Guid bookingId)
         {
             QueryExpression query = new QueryExpression("bookableresourcebooking")
             {
@@ -326,7 +573,7 @@ namespace XOI_Integration.DataverseRepository.Operations
                 {
                     Conditions =
                     {
-                        new ConditionExpression("bookableresourcebookingid", ConditionOperator.Equal, bookableResourceBookingId)
+                        new ConditionExpression("bookableresourcebookingid", ConditionOperator.Equal, bookingId)
                     }
                 }
             };
@@ -335,36 +582,120 @@ namespace XOI_Integration.DataverseRepository.Operations
             return response.Entities.FirstOrDefault()?.GetAttributeValue<string>("sisps_xoi_vision_jobshareurl");
         }
 
-        public static async Task<List<Guid>> GetBookableResourceBookingIdsAsync(string jobId)
+        //====Helper====
+
+        //22012026
+        private class TechnicianInfo
         {
+            public Guid? UserId { get; set; }
+            public string FullName { get; set; }
+            public string Email { get; set; }
+        }
+        private static TechnicianInfo GetTechnicianInfoFromBooking(Guid bookingId)
+        {
+            // Booking -> Resource
+            var booking = DataverseApi.Instance.Retrieve(
+                "bookableresourcebooking",
+                bookingId,
+                new ColumnSet("resource")
+            );
+
+            var resourceRef = booking.GetAttributeValue<EntityReference>("resource");
+            if (resourceRef == null) return new TechnicianInfo();
+
+            // Resource -> name + userid
+            var resource = DataverseApi.Instance.Retrieve(
+                "bookableresource",
+                resourceRef.Id,
+                new ColumnSet("name", "userid")
+            );
+
+            var resourceName = resource.GetAttributeValue<string>("name");
+            var userRef = resource.GetAttributeValue<EntityReference>("userid");
+
+            if (userRef == null)
+            {
+                // no user mapped, still can return resource name
+                return new TechnicianInfo { FullName = resourceName };
+            }
+
+            // User -> fullname + email
+            var user = DataverseApi.Instance.Retrieve(
+                "systemuser",
+                userRef.Id,
+                new ColumnSet("fullname", "internalemailaddress")
+            );
+
+            return new TechnicianInfo
+            {
+                UserId = userRef.Id,
+                FullName = !string.IsNullOrWhiteSpace(resourceName)
+                            ? resourceName
+                            : user.GetAttributeValue<string>("fullname"),
+                Email = user.GetAttributeValue<string>("internalemailaddress")
+            };
+        }
+
+
+        // =========================================================
+        // GET ALL BOOKING IDs FOR ONE JOB
+        // =========================================================
+        public static async Task<List<Guid>> GetBookableResourceBookingIdsAsync(string jobId)
+              {
+                  QueryExpression query = new QueryExpression("bookableresourcebooking")
+                  {
+                      ColumnSet = new ColumnSet("bookableresourcebookingid"),
+                      Criteria = new FilterExpression
+                      {
+                          Conditions =
+                          {
+                              new ConditionExpression("sisps_xoi_vision_jobid", ConditionOperator.Equal, jobId)
+                          }
+                      }
+                  };
+
+                  var response = await DataverseApi.Instance.RetrieveMultipleAsync(query);
+
+                  return response.Entities
+                      .Select(e => e.GetAttributeValue<Guid>("bookableresourcebookingid"))
+                      .ToList();
+              }
+       
+
+        public static async Task<Guid> GetBookableResourceBookingIdAsync(string jobId)
+        {
+            var list = await GetBookableResourceBookingIdsAsync(jobId);
+            return list.FirstOrDefault();
+        }
+
+        // =========================================================
+        // NOTE TEXT CLEAN COMPARISON
+        // =========================================================
+        public static bool NoteEquals(string a, string b)
+        {
+            a = a?.Trim().Replace("\r", "").Replace("\n", "");
+            b = b?.Trim().Replace("\r", "").Replace("\n", "");
+            return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+        }
+        public static async Task<Guid> GetBookingIdByWorkflowJobIdAsync(string workflowJobId)
+        {
+            if (string.IsNullOrWhiteSpace(workflowJobId))
+                return Guid.Empty;
+
             QueryExpression query = new QueryExpression("bookableresourcebooking")
             {
                 ColumnSet = new ColumnSet("bookableresourcebookingid"),
                 Criteria = new FilterExpression
                 {
                     Conditions =
-                    {
-                        new ConditionExpression("sisps_xoi_vision_jobid", ConditionOperator.Equal, jobId)
-                    }
+            {
+                new ConditionExpression("acl_xoi_workflowjobid", ConditionOperator.Equal, workflowJobId)
+            }
                 }
             };
 
-            var response = await DataverseApi.Instance.RetrieveMultipleAsync(query);
-            return response.Entities.Select(e => e.GetAttributeValue<Guid>("bookableresourcebookingid")).ToList();
-        }
-
-        public static async Task<Guid> GetBookableResourceBookingIdAsync(string jobId)
-        {
-            var bookingIds = await GetBookableResourceBookingIdsAsync(jobId);
-            return bookingIds.FirstOrDefault(); // gg update Returns Guid.Empty if no bookings found
-        }
-        /*gg*/
-        public static bool NoteEquals(string a, string b)
-        {
-            if (string.IsNullOrWhiteSpace(a) && string.IsNullOrWhiteSpace(b)) return true;
-            a = a?.Trim().Replace("\r", "").Replace("\n", "");
-            b = b?.Trim().Replace("\r", "").Replace("\n", "");
-            return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+            var result = await DataverseApi.Instance.RetrieveMultipleAsync(query);
+            return result.Entities.FirstOrDefault()?.Id ?? Guid.Empty;
         }
 
     }

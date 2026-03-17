@@ -14,6 +14,7 @@ namespace XOI_Integration.DataFactory.InheritedObjects
         public override async Task LoadData()
         {
             WorkOrderOperation operation = new WorkOrderOperation(BookableResourceBookingId);
+            WorkOrderId = await operation.GetWorkOrderIdAsync();
 
             AssigneeIds = string.Join(",", await GetResourcesAsync());
             CustomerName = await operation.WorkOrderGetCustomerInfoAsync();

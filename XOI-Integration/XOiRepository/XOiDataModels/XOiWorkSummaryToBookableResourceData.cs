@@ -13,6 +13,7 @@ namespace XOI_Integration.XOiRepository.XOiDataModels
         public string WorkSummary { get; set; }
         public string WorkflowId { get; set; }
         public string UserInitial { get; set; }
+        public Guid CustomerAssetId { get; set; }
 
         public bool IsFilled() 
         {

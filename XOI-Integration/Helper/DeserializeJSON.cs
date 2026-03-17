@@ -5,38 +5,72 @@ using XOI_Integration.DataModels.Enums;
 
 namespace XOI_Integration.Helper
 {
-    public class DeserializeJSON
+    public static class DeserializeJSON
     {
+        // -------------------------------------------------------
+        // EXISTING — Extract BookableResourceBookingId
+        // -------------------------------------------------------
         public static Guid GetBookableResourceBookingId(string jsonString)
         {
-            JObject jsonObject = JObject.Parse(jsonString);
+            var jsonObject = JObject.Parse(jsonString);
 
-            Guid bookableresourcebookingid = (Guid)jsonObject["InputParameters"][0]["value"]["Attributes"]
-                .FirstOrDefault(attr => (string)attr["key"] == "bookableresourcebookingid")?["value"];
+            Guid id = (Guid)jsonObject["InputParameters"][0]["value"]["Attributes"]
+                .FirstOrDefault(a => (string)a["key"] == "bookableresourcebookingid")?["value"];
 
-            return bookableresourcebookingid;
+            return id;
         }
 
+        // -------------------------------------------------------
+        // EXISTING — Determine Create vs Update
+        // -------------------------------------------------------
         public static OperationType GetDataverseOperationType(string jsonString)
         {
-            JObject jsonObject = JObject.Parse(jsonString);
+            var jsonObject = JObject.Parse(jsonString);
 
             string messageName = (string)jsonObject["MessageName"];
 
-            OperationType operationType = default;
-            switch (messageName)
+            return messageName switch
             {
-                case "Create":
-                    operationType = OperationType.Create;
-                    break;
-                case "Update":
-                    operationType = OperationType.Update;
-                    break;
-                default:
-                    break;
-            }
+                "Create" => OperationType.Create,
+                "Update" => OperationType.Update,
+                _ => OperationType.Update
+            };
+        }
 
-            return operationType;
+        // -------------------------------------------------------
+        // NEW — Extract WorkOrderId 
+        // -------------------------------------------------------
+        public static Guid GetWorkOrderId(string jsonString)
+        {
+            try
+            {
+                var json = JObject.Parse(jsonString);
+
+                // ⚡ First place: InputParameters → Target → Attributes
+                var attrs = json["InputParameters"]?[0]?["value"]?["Attributes"];
+                if (attrs != null)
+                {
+                    var wo = attrs.FirstOrDefault(a => (string)a["key"] == "msdyn_workorder")?["value"];
+                    if (wo != null)
+                        return (Guid)wo;
+                }
+
+                // ⚡ Second place: Pipeline secure/unsecure (for plugin-format messages)
+                var target = json["Target"]?["Attributes"];
+                if (target != null)
+                {
+                    var wo = target.FirstOrDefault(a => (string)a["key"] == "msdyn_workorder")?["value"];
+                    if (wo != null)
+                        return (Guid)wo;
+                }
+
+                // ⚡ No work order in JSON
+                return Guid.Empty;
+            }
+            catch
+            {
+                return Guid.Empty;
+            }
         }
     }
 }

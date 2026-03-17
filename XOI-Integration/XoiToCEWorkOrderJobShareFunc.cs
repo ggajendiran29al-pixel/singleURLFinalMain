@@ -1,9 +1,10 @@
-using Microsoft.Azure.WebJobs;
+﻿using Microsoft.Azure.WebJobs;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Threading.Tasks;
 using XOI_Integration.DataFactory;
 using XOI_Integration.DataFactory.BaseObject;
+using XOI_Integration.DataFactory.InheritedObjects.OperationsForInheritedObjects;
 using XOI_Integration.DataverseRepository;
 using XOI_Integration.DataverseRepository.Operations;
 using XOI_Integration.DataverseRepository.Provider;
@@ -14,42 +15,74 @@ namespace XOI_Integration
     public class XoiToCEWorkOrderJobShareFunc
     {
         [FunctionName("XoiToCEWorkOrderJobShare")]
-        public async Task RunAsync([ServiceBusTrigger("xoitoceworkorderjobshare", Connection = "SBConnection")] string myQueueItem, ILogger log)
+        public async Task RunAsync(
+            [ServiceBusTrigger("xoitoceworkorderjobshare", Connection = "SBConnection")]
+            string message,
+            ILogger log)
         {
-            DataverseApi.Initialize(System.Environment.GetEnvironmentVariable("DataverseConnectionString", EnvironmentVariableTarget.Process));
+            log.LogWarning("XoiToCEWorkOrderJobShare triggered.");
+            DataverseApi.Initialize(Environment.GetEnvironmentVariable("DataverseConnectionString"));
 
-            Guid bookableResourceBookingId = DeserializeJSON.GetBookableResourceBookingId(myQueueItem);
+            Guid bookingId = DeserializeJSON.GetBookableResourceBookingId(message);
+            log.LogInformation($"Processing BRB: {bookingId}");
 
+            JobRelatedData jobData = await JobRelatedDataFactory.CreateAsync(bookingId);
+            await jobData.LoadData();
 
-            (bool hasOtherResources, Guid copyFromBookableresourcebookingid) = await BookableResourceChecker.CheckForOtherResourcesAndJobIdAsync(bookableResourceBookingId);
+            // 1️⃣ Check if WorkOrder already has an XOi job
+            var existingJobId = await WorkOrderOperation.GetXOiJobIdAsync(jobData.WorkOrderId);
 
-            log.LogInformation($"A job has already been created for the corresponding WorkOrder/Project. Resource ID: {copyFromBookableresourcebookingid}");
-
-            /*if (hasOtherResources)
+            if (!string.IsNullOrEmpty(existingJobId))
             {
-                log.LogInformation("Initiating the copy operation");
-                await BookableResourceBookingOperation.CopyJobDetailsToCurrentAsync(bookableResourceBookingId, copyFromBookableresourcebookingid);
+                log.LogInformation($"Reusing WorkOrder job: {existingJobId}");
 
-                log.LogInformation("Copy operation completed successfully");
+                Guid firstBookingId = await BookableResourceBookingOperation.GetBookableResourceBookingIdAsync(existingJobId);
+
+                if (firstBookingId != Guid.Empty)
+                {
+                    log.LogInformation($"Found first booking: {firstBookingId}");
+
+                    await BookableResourceBookingOperation.CopyJobDetailsToCurrentAsync(
+                        bookingId,
+                        firstBookingId
+                    );
+
+                    // IMPORTANT: Store workflowId as empty placeholder
+                    await BookableResourceBookingOperation.UpdateWorkflowJobIdOnBookingAsync(
+                        bookingId,
+                        "" // will be updated later by XoiToCeUpdateBooking
+                    );
+
+                    log.LogInformation("✔ Copied job details from first booking to secondary booking");
+                    return;
+                }
+
+                return;
             }
-            else
-            {*/
-                JobRelatedData jobRelatedData = await JobRelatedDataFactory.CreateAsync(bookableResourceBookingId);
-                await jobRelatedData.LoadData();
 
-                var xOiJobId = await BookableResourceBookingOperation.GetXOiJobIdAsync(bookableResourceBookingId);
+            // 2️⃣ Create new job
+            var bookingJobId = await BookableResourceBookingOperation.GetXOiJobIdAsync(bookingId);
 
-                var operationType = XOiOperationType.DetermineOperationType(myQueueItem, xOiJobId);
+            var operationType = XOiOperationType.DetermineOperationType(message, bookingJobId);
 
-                var xOiToBookableResourceDataHandler = new XOiToBookableResourceDataHandler(log);
-                var xOiToBookableResourceData = await xOiToBookableResourceDataHandler.HandleXOiToBookableResourceDataAsync(operationType, jobRelatedData, bookableResourceBookingId, xOiJobId);
+            var handler = new XOiToBookableResourceDataHandler(log);
+            var xData = await handler.HandleXOiToBookableResourceDataAsync(
+                operationType,
+                jobData,
+                bookingId,
+                bookingJobId
+            );
 
-                log.LogInformation("Create integration logs");
+            // Now store empty workflowJobId placeholder
+            await BookableResourceBookingOperation.UpdateWorkflowJobIdOnBookingAsync(
+                bookingId,
+                ""
+            );
 
-                await IntegrationLogOperation.CreateLogAsync(bookableResourceBookingId, xOiToBookableResourceData);
+            log.LogInformation("Create integration logs");
+            await IntegrationLogOperation.CreateLogAsync(bookingId, xData);
 
-                log.LogInformation("XoiToCEWorkOrderJobShare function completed");
-            //}
+            log.LogInformation("XoiToCEWorkOrderJobShare completed");
         }
     }
 }

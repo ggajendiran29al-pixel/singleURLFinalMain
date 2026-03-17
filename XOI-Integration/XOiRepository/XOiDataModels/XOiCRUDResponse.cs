@@ -1,8 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace XOI_Integration.XOiRepository.XOiDataModels
 {
@@ -16,6 +13,11 @@ namespace XOI_Integration.XOiRepository.XOiDataModels
     public class UpdateJob : CreateJob { }
     public class GetJob : CreateJob { }
 
+    // ContributeToJob (TOP-LEVEL under deepLinks)
+    public class ContributeToJob
+    {
+        public string Url { get; set; }
+    }
 
     public class AdditionalActionsResults
     {
@@ -33,10 +35,26 @@ namespace XOI_Integration.XOiRepository.XOiDataModels
         public string ShareLink { get; set; }
     }
 
+    // ------------------------------------------
+    // CORRECT DEEPLINKS STRUCTURE (WORKING VERSION)
+    // ------------------------------------------
     public class DeepLinks
     {
+        public ContributeToJob ContributeToJob { get; set; }     // MUST BE HERE (not inside visionMobile)
         public VisionMobile VisionMobile { get; set; }
-        public VisionWeb VisionWeb { get; set; } 
+        public VisionWeb VisionWeb { get; set; }
+    }
+
+    public class VisionMobile
+    {
+        public EditJob EditJob { get; set; }
+        public ViewJob ViewJob { get; set; }
+        public JobLocationActivitySearch JobLocationActivitySearch { get; set; }
+    }
+
+    public class VisionWeb
+    {
+        public ViewJob ViewJob { get; set; }
     }
 
     public class EditJob
@@ -44,6 +62,17 @@ namespace XOI_Integration.XOiRepository.XOiDataModels
         public string Url { get; set; }
     }
 
+    public class ViewJob
+    {
+        public string Url { get; set; }
+    }
+
+    public class JobLocationActivitySearch
+    {
+        public string Url { get; set; }
+    }
+
+    // Main Job Record
     public class Job
     {
         public string Id { get; set; }
@@ -57,24 +86,5 @@ namespace XOI_Integration.XOiRepository.XOiDataModels
         public List<string> Tags { get; set; }
         public List<string> TagSuggestions { get; set; }
         public DeepLinks DeepLinks { get; set; }
-    }
-
-    public class JobLocationActivitySearch
-    {
-        public string Url { get; set; }
-    }
-
-    public class VisionWeb
-    {
-        public ViewJob ViewJob { get; set; }
-    }
-    public class VisionMobile
-    {
-        public EditJob EditJob { get; set; }
-        public JobLocationActivitySearch JobLocationActivitySearch { get; set; }
-    }
-    public class ViewJob
-    {
-        public string Url { get; set; }
     }
 }
