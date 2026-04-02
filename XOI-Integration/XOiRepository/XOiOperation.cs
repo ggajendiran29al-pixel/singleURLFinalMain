@@ -56,6 +56,14 @@ mutation CreateJob(
       jobLocation
       workOrderNumber
       label
+      deepLinks {
+        visionMobile {
+          contributeToJob { url }
+        }
+        visionWeb {
+          viewJob { url }
+        }
+      }
     }
     additionalActionsResults {
       createPublicShare {
@@ -97,6 +105,14 @@ mutation UpdateJob(
       customerName
       workOrderNumber
       jobLocation
+      deepLinks {
+        visionMobile {
+          contributeToJob { url }
+        }
+        visionWeb {
+          viewJob { url }
+        }
+      }
     }
   }
 }"},
