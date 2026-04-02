@@ -53,12 +53,14 @@ namespace XOI_Integration.XOiRepository.Helper
                     result.Message = "Missing job data.";
                     return result;
                 }
-
                 var job = node.Job;
                 if (job == null)
                 {
+                    log.LogError("XOi API returned null job object.");
+
                     result.jobResponseResult = JobResponseResult.Failure;
-                    result.Message = "Job block missing.";
+                    result.Message = "Job block missing from API response.";
+
                     return result;
                 }
 
@@ -67,6 +69,16 @@ namespace XOI_Integration.XOiRepository.Helper
                 result.Message = "OK";
 
                 // JOB ID
+                if (string.IsNullOrEmpty(job.Id))
+                {
+                    log.LogError("XOi API returned job without ID.");
+
+                    result.jobResponseResult = JobResponseResult.Failure;
+                    result.Message = "XOi Vision Job ID was not returned by API.";
+
+                    return result;
+                }
+
                 result.XOiVisionJobId = job.Id;
 
                 // WEB VIEW URL
@@ -76,7 +88,10 @@ namespace XOI_Integration.XOiRepository.Helper
                 result.XoiVisionJobShareURL = node.AdditionalActionsResults?.CreatePublicShare?.ShareLink;
 
                 // CONTRIBUTION URL (CORRECT WORKING VERSION)
-                result.ContributeToJobUrl = job.DeepLinks?.ContributeToJob?.Url;
+                result.ContributeToJobUrl =
+    job.DeepLinks?.VisionMobile?.ContributeToJob?.Url
+    ?? job.DeepLinks?.ContributeToJob?.Url;
+                //result.ContributeToJobUrl = job.DeepLinks?.ContributeToJob?.Url;
 
                 // MOBILE EDIT JOB URL
                 result.XoiVisionJobURL = job.DeepLinks?.VisionMobile?.EditJob?.Url;

@@ -10,5 +10,7 @@ namespace XOI_Integration.DataModels
     {
         public string Note { get; set; }
         public Guid NoteId { get; set; }
+        public Guid BookingId { get; set; } //added on 6th feb
+        public string Hash { get; set; } //added on 10 march
     }
 }

@@ -15,9 +15,13 @@ namespace XOI_Integration.XOiRepository.XOiDataModels
         public string UserInitial { get; set; }
         public Guid CustomerAssetId { get; set; }
 
-        public bool IsFilled() 
+        public bool IsFilled()
         {
-            return !String.IsNullOrEmpty(WorkflowName) || !String.IsNullOrEmpty(CompleteDate) || !String.IsNullOrEmpty(WorkSummary) || !String.IsNullOrEmpty(WorkflowId);
+            return !string.IsNullOrWhiteSpace(WorkflowName)
+    || !string.IsNullOrWhiteSpace(CompleteDate)
+    || !string.IsNullOrWhiteSpace(WorkSummary)
+    || !string.IsNullOrWhiteSpace(WorkflowId);
+            /*return !String.IsNullOrEmpty(WorkflowName) || !String.IsNullOrEmpty(CompleteDate) || !String.IsNullOrEmpty(WorkSummary) || !String.IsNullOrEmpty(WorkflowId);*/
         }
     }
 }

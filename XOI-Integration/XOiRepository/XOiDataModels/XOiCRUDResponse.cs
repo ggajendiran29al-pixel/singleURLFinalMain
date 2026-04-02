@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace XOI_Integration.XOiRepository.XOiDataModels
 {
@@ -40,13 +41,20 @@ namespace XOI_Integration.XOiRepository.XOiDataModels
     // ------------------------------------------
     public class DeepLinks
     {
-        public ContributeToJob ContributeToJob { get; set; }     // MUST BE HERE (not inside visionMobile)
-        public VisionMobile VisionMobile { get; set; }
+
+        // VisionWeb in C# maps to 'visionWeb' in GraphQL JSON
+        [JsonPropertyName("visionWeb")]
         public VisionWeb VisionWeb { get; set; }
+       // public ContributeToJob ContributeToJob { get; set; }    
+        public VisionMobile VisionMobile { get; set; }
+        //public VisionWeb VisionWeb { get; set; }
+        [JsonPropertyName("ContributeToJob")]
+        public ContributeToJob ContributeToJob { get; set; }
     }
 
     public class VisionMobile
     {
+        public ContributeToJob ContributeToJob { get; set; }
         public EditJob EditJob { get; set; }
         public ViewJob ViewJob { get; set; }
         public JobLocationActivitySearch JobLocationActivitySearch { get; set; }

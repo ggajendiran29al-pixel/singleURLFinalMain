@@ -33,8 +33,17 @@ namespace XOI_Integration.DataverseRepository.Operations
                     : x.XoiVisionWebURL;
 
             entity["sisps_xoi_vision_webjoburl"] = finalWebUrl;
+            entity["sisps_xoi_vision_joburl"] = finalWebUrl;
+
 
             await DataverseApi.Instance.UpdateAsync(entity);
+        }
+        //Hash
+        private static string ComputeHash(string input)
+        {
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            var bytes = System.Text.Encoding.UTF8.GetBytes(input ?? "");
+            return Convert.ToHexString(sha.ComputeHash(bytes));
         }
 
         // =========================================================
@@ -198,7 +207,7 @@ namespace XOI_Integration.DataverseRepository.Operations
         {
             QueryExpression query = new QueryExpression("msdyn_bookableresourcebookingquicknote")
             {
-                ColumnSet = new ColumnSet("msdyn_text"),
+                ColumnSet = new ColumnSet("msdyn_text", "acl_xoisummaryhash"),
                 Criteria = new FilterExpression
                 {
                     Conditions =
@@ -213,14 +222,12 @@ namespace XOI_Integration.DataverseRepository.Operations
             };
 
             var result = await DataverseApi.Instance.RetrieveMultipleAsync(query);
-
-            return result.Entities
-                .Select(e => new BookableResourceBookingNote
-                {
-                    Note = e.GetAttributeValue<string>("msdyn_text"),
-                    NoteId = e.Id
-                })
-                .ToList();
+            return result.Entities.Select(e => new BookableResourceBookingNote
+            {
+                Note = e.GetAttributeValue<string>("msdyn_text"),
+                Hash = e.GetAttributeValue<string>("acl_xoisummaryhash"),
+                NoteId = e.Id
+            }).ToList();
         }
 
         // =========================================================
@@ -281,12 +288,28 @@ namespace XOI_Integration.DataverseRepository.Operations
             var techName = tech.FullName ?? summary.UserInitial;
             log.LogInformation($"Technician for booking {currentBookingId}: {techName} (UserId: {tech.UserId})");
 
+            string noteText =
+      $"[{summary.WorkflowName}] Summary from ({techName}): {summary.WorkSummary}"
+      + Environment.NewLine
+      + shareLink;
+
+            // 🔥 Compute hash
+            string hash = ComputeHash(noteText);
+
+            // 🔥 DUPLICATE CHECK (bulletproof)
+            if (existingNotes.Any(n => n.Hash == hash))
+            {
+                log.LogInformation($"Duplicate note detected via hash for booking {currentBookingId} — skipped.");
+                return;
+            }
+
             Entity note = new Entity("msdyn_bookableresourcebookingquicknote")
             {
                 ["msdyn_quicknote_lookup_entity"] = new EntityReference("bookableresourcebooking", currentBookingId),
-                ["msdyn_text"] = $"[{summary.WorkflowName}] Summary from ({techName}): {summary.WorkSummary}"
-                                 + Environment.NewLine
-                                 + shareLink
+                ["msdyn_text"] = noteText,
+
+                // 🔥 STORE HASH IN DATAVERSE
+                ["acl_xoisummaryhash"] = hash
             };
 
             // ✅ Set owner so BU is correct

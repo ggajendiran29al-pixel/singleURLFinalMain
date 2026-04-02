@@ -15,7 +15,8 @@ namespace XOI_Integration.XOiRepository.XOiDataModels
         public string XoiVisionJobShareURL { get; set; }        // Public share URL
         public string XoiVisionWebURL { get; set; }             // View Job URL (fallback)
         public string ContributeToJobUrl { get; set; }          // The preferred URL
-
+        public string VisionMobileJobUrl { get; set; }   // sisps_xoi_vision_joburl
+        public string VisionWebJobUrl { get; set; }      // sisps_xoi_vision_webjoburl
         public JobResponseResult jobResponseResult { get; set; }
         public OperationType operationType { get; set; }
         public string Message { get; set; }

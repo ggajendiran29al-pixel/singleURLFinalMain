@@ -38,5 +38,12 @@ namespace XOI_Integration.XOiRepository.XOiDataModels
         /// Not sent by XOi but used in note logic.
         /// </summary>
         public bool IsWorkflowSummary { get; set; }
+        //update
+        public string SingleURL { get; set; }
+
+        // booking URL fields
+        public string VisionMobileUrl { get; set; }   // sisps_xoi_vision_joburl
+        public string VisionWebUrl { get; set; }      // sisps_xoi_vision_webjoburl
+
     }
 }

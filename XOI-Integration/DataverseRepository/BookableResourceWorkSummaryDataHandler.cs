@@ -19,6 +19,12 @@ namespace XOI_Integration.DataverseRepository
         {
             _log = log;
         }
+        private static string ComputeHash(string input)
+        {
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            var bytes = System.Text.Encoding.UTF8.GetBytes(input ?? "");
+            return Convert.ToHexString(sha.ComputeHash(bytes));
+        }
 
         // ---------------------------------------------------------------------
         // Helper - Check if a note already exists on this booking with this text
@@ -63,6 +69,7 @@ namespace XOI_Integration.DataverseRepository
                 return;
             }
 
+
             // ---------------------------------------------------
             // 1. Resolve BU for each booking + update asset owner
             // ---------------------------------------------------
@@ -101,24 +108,44 @@ namespace XOI_Integration.DataverseRepository
                     jobShareLink;
 
                 // Dedup check
-                if (await NoteAlreadyExistsAsync(bookingId, newNote))
+                // ✅ Compute hash of summary only (without job link)
+                string summaryText = $"[{xOiSummary.WorkflowName}] Summary from ({xOiSummary.UserInitial}): {xOiSummary.WorkSummary}";
+                string hash = ComputeHash(summaryText);
+
+                // Fetch all existing notes for this booking (with hash)
+                var existingNotes = await BookableResourceBookingOperation.GetBookableResourceBookingNotesForSingleBooking(bookingId);
+
+                // Skip if hash already exists
+                bool alreadyExists = existingNotes.Any(n =>
+                    !string.IsNullOrEmpty(n.Hash) &&
+                    string.Equals(n.Hash, hash, StringComparison.OrdinalIgnoreCase));
+
+                // Optional fallback for old notes created without hash
+                if (!alreadyExists)
                 {
-                    _log.LogWarning($"NOTE SKIPPED — identical note already exists for booking {bookingId}");
+                    alreadyExists = existingNotes.Any(n =>
+                        !string.IsNullOrEmpty(n.Note) &&
+                        n.Note.Contains(summaryText, StringComparison.OrdinalIgnoreCase));
+                }
+
+                if (alreadyExists)
+                {
+                    _log.LogInformation($"Skipping note — same summary already exists for booking {bookingId}");
                     continue;
                 }
 
-                // Create quick note record
                 Entity note = new Entity("msdyn_bookableresourcebookingquicknote")
                 {
                     ["msdyn_quicknote_lookup_entity"] = new EntityReference("bookableresourcebooking", bookingId),
-                    ["msdyn_text"] = newNote
+                    ["msdyn_text"] = newNote,
+                    ["acl_xoisummaryhash"] = hash
                 };
 
                 await DataverseApi.Instance.CreateAsync(note);
-                _log.LogInformation($"Created note for booking {bookingId}");
+                _log.LogInformation($"Created new note (summary hash: {hash}) for booking {bookingId}");
             }
 
-            _log.LogInformation("Finish creating Bookable Resource Booking Notes");
+                _log.LogInformation("Finish creating Bookable Resource Booking Notes");
         }
     }
 }
