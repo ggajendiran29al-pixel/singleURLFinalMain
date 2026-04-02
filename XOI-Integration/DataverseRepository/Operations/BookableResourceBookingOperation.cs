@@ -33,8 +33,8 @@ namespace XOI_Integration.DataverseRepository.Operations
                     : x.XoiVisionWebURL;
 
             entity["sisps_xoi_vision_webjoburl"] = finalWebUrl;
-            entity["sisps_xoi_vision_joburl"] = finalWebUrl;
-
+            //02042026 Removed: duplicate sisps_xoi_vision_joburl assignment was overwriting the correct value set above and clearing the field to null
+            //entity["sisps_xoi_vision_joburl"] = finalWebUrl;
 
             await DataverseApi.Instance.UpdateAsync(entity);
         }
