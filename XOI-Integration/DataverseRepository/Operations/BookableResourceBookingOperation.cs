@@ -225,74 +225,41 @@ namespace XOI_Integration.DataverseRepository.Operations
         }
 
         // =========================================================
-        // NOTE CREATION WITH FIXED DUPLICATE CHECK
+        // NOTE CREATION
         // =========================================================
-        // 03042026 Added bookingId parameter — caller (XoiToCeUpdateBooking) already resolved the correct booking;
-        // removed internal GetBookingIdByWorkflowJobIdAsync lookup which was unreliable when acl_xoi_workflowjobid was not yet set
+        // 03042026 Restored original signature — workflowJobId lookup is reliable because
+        // XoiToCeUpdateBooking step 4 always writes workflowJobId to the correct booking
+        // (resolved via email match) BEFORE this method is called
         public static async Task CreateBookableResourceBookingNoteAsync(
     ILogger log,
     XOiWorkSummaryToBookableResourceData summary,
     string jobId,
-    string workflowJobId,
-    Guid bookingId)
+    string workflowJobId)
         {
             log.LogInformation("Start creating notes (workflow-specific)");
 
-            Guid currentBookingId = bookingId;
+            // Find correct booking via workflowJobId — set by XoiToCeUpdateBooking step 4
+            Guid currentBookingId = await GetBookingIdByWorkflowJobIdAsync(workflowJobId);
 
             if (currentBookingId == Guid.Empty)
             {
-                log.LogWarning($"No booking resolved for workflowJobId '{workflowJobId}' — skipping note.");
+                log.LogWarning($"No booking found for workflowJobId '{workflowJobId}' — skipping note.");
                 return;
             }
 
-            // Load notes only for this booking
-            var existingNotes = await GetBookableResourceBookingNotesForSingleBooking(currentBookingId);
-
             string shareLink = await GetBookableResourceBookingCustomerJobShareLinkAsync(currentBookingId);
-            //commented to be removed//22Jan2026
-            /* var techName =
-     GetTechnicianInitialFromBooking(currentBookingId) ?? summary.UserInitial;
 
-             log.LogInformation(
-                 $"Technician name for booking {currentBookingId}: {techName}");
-
-             string noteText =
-                 $"[{summary.WorkflowName}] Summary from ({techName}): {summary.WorkSummary}"
-                 + Environment.NewLine
-                 + shareLink;
-
-
-             if (existingNotes.Any(n => NoteEquals(n.Note, noteText)))
-             {
-                 log.LogInformation($"Duplicate note detected for booking {currentBookingId} — skipped.");
-                 return;
-             }
-
-             // 3️⃣ Create note ONLY for correct booking
-             Entity note = new Entity("msdyn_bookableresourcebookingquicknote")
-             {
-                 ["msdyn_quicknote_lookup_entity"] = new EntityReference(
-                     "bookableresourcebooking", currentBookingId),
-                 ["msdyn_text"] = noteText
-             };
-
-             await DataverseApi.Instance.CreateAsync(note);*/
-            //Set Owner for Notes so BU is Set
             var tech = GetTechnicianInfoFromBooking(currentBookingId);
-
             var techName = tech.FullName ?? summary.UserInitial;
             log.LogInformation($"Technician for booking {currentBookingId}: {techName} (UserId: {tech.UserId})");
 
-            string noteText =
-      $"[{summary.WorkflowName}] Summary from ({techName}): {summary.WorkSummary}"
-      + Environment.NewLine
-      + shareLink;
+            string noteText = $"[{summary.WorkflowName}] Summary from ({techName}): {summary.WorkSummary}"
+                              + Environment.NewLine
+                              + shareLink;
 
-            // 🔥 Compute hash
+            // Hash-based duplicate check using acl_xoisummaryhash field
             string hash = ComputeHash(noteText);
-
-            // 🔥 DUPLICATE CHECK (bulletproof)
+            var existingNotes = await GetNotesForBookingAsync(currentBookingId);
             if (existingNotes.Any(n => n.Hash == hash))
             {
                 log.LogInformation($"Duplicate note detected via hash for booking {currentBookingId} — skipped.");
@@ -303,12 +270,9 @@ namespace XOI_Integration.DataverseRepository.Operations
             {
                 ["msdyn_quicknote_lookup_entity"] = new EntityReference("bookableresourcebooking", currentBookingId),
                 ["msdyn_text"] = noteText,
-
-                // 🔥 STORE HASH IN DATAVERSE
                 ["acl_xoisummaryhash"] = hash
             };
 
-            // ✅ Set owner so BU is correct
             if (tech.UserId.HasValue && tech.UserId.Value != Guid.Empty)
             {
                 note["ownerid"] = new EntityReference("systemuser", tech.UserId.Value);

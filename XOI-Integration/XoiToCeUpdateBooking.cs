@@ -143,14 +143,12 @@ namespace XOI_Integration
                         _log.LogInformation(
                             "🟢 Technician entered notes — creating booking note");
 
-                        // 03042026 Pass resolved bookingId directly — avoids unreliable internal lookup
                         await BookableResourceBookingOperation
                             .CreateBookableResourceBookingNoteAsync(
                                 _log,
                                 wfSummary,
                                 jobId,
-                                workflowJobId,
-                                bookingId);
+                                workflowJobId);
                     }
 
                     // ✅ Association attempt (may or may not succeed yet)
