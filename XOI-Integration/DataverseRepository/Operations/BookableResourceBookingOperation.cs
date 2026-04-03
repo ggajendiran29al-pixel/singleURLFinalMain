@@ -253,12 +253,24 @@ namespace XOI_Integration.DataverseRepository.Operations
             var techName = tech.FullName ?? summary.UserInitial;
             log.LogInformation($"Technician for booking {currentBookingId}: {techName} (UserId: {tech.UserId})");
 
+            string noteText = $"[{summary.WorkflowName}] Summary from ({techName}): {summary.WorkSummary}"
+                              + Environment.NewLine
+                              + shareLink;
+
+            // Hash-based duplicate check using acl_xoisummaryhash field
+            string hash = ComputeHash(noteText);
+            var existingNotes = await GetNotesForBookingAsync(currentBookingId);
+            if (existingNotes.Any(n => n.Hash == hash))
+            {
+                log.LogInformation($"Duplicate note detected via hash for booking {currentBookingId} — skipped.");
+                return;
+            }
+
             Entity note = new Entity("msdyn_bookableresourcebookingquicknote")
             {
                 ["msdyn_quicknote_lookup_entity"] = new EntityReference("bookableresourcebooking", currentBookingId),
-                ["msdyn_text"] = $"[{summary.WorkflowName}] Summary from ({techName}): {summary.WorkSummary}"
-                                 + Environment.NewLine
-                                 + shareLink
+                ["msdyn_text"] = noteText,
+                ["acl_xoisummaryhash"] = hash
             };
 
             if (tech.UserId.HasValue && tech.UserId.Value != Guid.Empty)
