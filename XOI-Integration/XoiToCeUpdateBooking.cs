@@ -68,48 +68,61 @@ namespace XOI_Integration
                 _log.LogInformation($"workflowJobId received = {workflowJobId}");
 
                 // =====================================================
-                // 3️⃣ Resolve booking for THIS workflow by matching assignee email to technician
-                // 03042026 Replaced positional "first empty field" guess with email match —
-                // ensures each workflow's notes always go to the correct booking regardless
-                // of how many workflows have fired or how many bookings share the same job
+                // 3️⃣ Resolve booking — pick first booking with empty acl_xoi_workflowjobid
+                // 03042026 Reverted email matching — XOi returns ALL assignees in GetJobSummary
+                // regardless of workflowJobId so FirstOrDefault always returns the same person
+                // causing all workflows to map to the same booking
                 // =====================================================
                 var allBookings =
                     await BookableResourceBookingOperation
                         .GetBookableResourceBookingIdsAsync(jobId);
 
-                // Fetch workflow summary early so we have the assignee email for matching
-                XOiWorkSummaryToBookableResourceData wfSummaryForMatch = null;
-                if (!string.IsNullOrEmpty(workflowJobId))
-                    wfSummaryForMatch = await xOi.GetJobSummaryWorkflowAsync(jobId, workflowJobId);
-
                 Guid bookingId = Guid.Empty;
 
-                if (wfSummaryForMatch != null && !string.IsNullOrEmpty(wfSummaryForMatch.AssigneeEmail))
+                foreach (var brbId in allBookings)
                 {
-                    bookingId = await BookableResourceBookingOperation
-                        .GetBookingIdByAssigneeEmailAsync(jobId, wfSummaryForMatch.AssigneeEmail);
+                    var brb = DataverseApi.Instance.Retrieve(
+                        "bookableresourcebooking",
+                        brbId,
+                        new Microsoft.Xrm.Sdk.Query.ColumnSet("acl_xoi_workflowjobid")
+                    );
 
-                    _log.LogInformation($"Booking resolved by email match ({wfSummaryForMatch.AssigneeEmail}): {bookingId}");
+                    var existingWorkflowId = brb.GetAttributeValue<string>("acl_xoi_workflowjobid");
+
+                    if (string.IsNullOrEmpty(existingWorkflowId))
+                    {
+                        bookingId = brbId;
+                        break;
+                    }
                 }
 
-                // Fallback: if email match fails, use last booking
+                // Fallback: all bookings have a workflowJobId — use last (handles repeat workflows on same booking)
                 if (bookingId == Guid.Empty && allBookings.Any())
-                {
                     bookingId = allBookings.Last();
-                    _log.LogWarning($"Email match failed — falling back to last booking: {bookingId}");
-                }
 
                 // =====================================================
-                // 4️⃣ Store workflowJobId on the resolved booking
+                // 4️⃣ Assign workflowJobId ONLY IF EMPTY
                 // =====================================================
                 if (bookingId != Guid.Empty && !string.IsNullOrEmpty(workflowJobId))
                 {
-                    await BookableResourceBookingOperation
-                        .UpdateWorkflowJobIdOnBookingAsync(
+                    var currentValue =
+                        DataverseApi.Instance.Retrieve(
+                            "bookableresourcebooking",
                             bookingId,
-                            workflowJobId);
+                            new Microsoft.Xrm.Sdk.Query.ColumnSet("acl_xoi_workflowjobid")
+                        )
+                        .GetAttributeValue<string>("acl_xoi_workflowjobid");
 
-                    _log.LogInformation($"workflowJobId mapped to booking {bookingId}");
+                    if (string.IsNullOrEmpty(currentValue))
+                    {
+                        await BookableResourceBookingOperation
+                            .UpdateWorkflowJobIdOnBookingAsync(
+                                bookingId,
+                                workflowJobId);
+
+                        _log.LogInformation(
+                            $"workflowJobId mapped to booking {bookingId}");
+                    }
                 }
 
                 // =====================================================
@@ -120,8 +133,7 @@ namespace XOI_Integration
                     _log.LogInformation(
                         "🔹 Workflow update detected — technician notes scenario");
 
-                    // 03042026 Reuse already-fetched summary from step 3 — avoids duplicate API call
-                    var wfSummary = wfSummaryForMatch ?? await xOi.GetJobSummaryWorkflowAsync(jobId, workflowJobId);
+                    var wfSummary = await xOi.GetJobSummaryWorkflowAsync(jobId, workflowJobId);
 
                     jobInfo.WorkSummary = wfSummary;
                     // ✅ Asset creation/update — ONLY here
