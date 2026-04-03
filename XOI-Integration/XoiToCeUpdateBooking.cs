@@ -101,16 +101,28 @@ namespace XOI_Integration
                     bookingId = allBookings.Last();
 
                 // =====================================================
-                // 4️⃣ Store workflowJobId on the resolved booking
+                // 4️⃣ Assign workflowJobId ONLY IF EMPTY
                 // =====================================================
                 if (bookingId != Guid.Empty && !string.IsNullOrEmpty(workflowJobId))
                 {
-                    await BookableResourceBookingOperation
-                        .UpdateWorkflowJobIdOnBookingAsync(
+                    var currentValue =
+                        DataverseApi.Instance.Retrieve(
+                            "bookableresourcebooking",
                             bookingId,
-                            workflowJobId);
+                            new Microsoft.Xrm.Sdk.Query.ColumnSet("acl_xoi_workflowjobid")
+                        )
+                        .GetAttributeValue<string>("acl_xoi_workflowjobid");
 
-                    _log.LogInformation($"workflowJobId mapped to booking {bookingId}");
+                    if (string.IsNullOrEmpty(currentValue))
+                    {
+                        await BookableResourceBookingOperation
+                            .UpdateWorkflowJobIdOnBookingAsync(
+                                bookingId,
+                                workflowJobId);
+
+                        _log.LogInformation(
+                            $"workflowJobId mapped to booking {bookingId}");
+                    }
                 }
 
                 // =====================================================
