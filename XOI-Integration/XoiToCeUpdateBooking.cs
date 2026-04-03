@@ -68,50 +68,31 @@ namespace XOI_Integration
                 _log.LogInformation($"workflowJobId received = {workflowJobId}");
 
                 // =====================================================
-                // 3️⃣ Resolve booking — match by technician email first, then first empty
-                // 04042026 Fetch workflow summary early to get assignee email.
-                // Filter to that technician's bookings, then pick first with empty
-                // acl_xoi_workflowjobid. Fallback to positional if email unavailable.
+                // 3️⃣ Resolve booking — positional first-empty
                 // =====================================================
                 var allBookings =
                     await BookableResourceBookingOperation
                         .GetBookableResourceBookingIdsAsync(jobId);
 
-                // Fetch workflow summary early to get assignee email for booking resolution
-                XOiWorkSummaryToBookableResourceData wfSummaryEarly = null;
-                if (!string.IsNullOrEmpty(workflowJobId))
-                    wfSummaryEarly = await xOi.GetJobSummaryWorkflowAsync(jobId, workflowJobId);
-
                 Guid bookingId = Guid.Empty;
 
-                // Try email-based match first (handles multiple technicians on same job)
-                if (wfSummaryEarly != null && !string.IsNullOrEmpty(wfSummaryEarly.AssigneeEmail))
+                foreach (var brbId in allBookings)
                 {
-                    bookingId = await BookableResourceBookingOperation
-                        .GetBookingIdByAssigneeEmailAsync(jobId, wfSummaryEarly.AssigneeEmail);
-                    _log.LogInformation($"Booking resolved by email ({wfSummaryEarly.AssigneeEmail}): {bookingId}");
+                    var brb = DataverseApi.Instance.Retrieve(
+                        "bookableresourcebooking",
+                        brbId,
+                        new Microsoft.Xrm.Sdk.Query.ColumnSet("acl_xoi_workflowjobid")
+                    );
+                    var existingWorkflowId = brb.GetAttributeValue<string>("acl_xoi_workflowjobid");
+                    if (string.IsNullOrEmpty(existingWorkflowId))
+                    {
+                        bookingId = brbId;
+                        break;
+                    }
                 }
 
-                // Fallback: no email or no match — use positional (first empty)
-                if (bookingId == Guid.Empty)
-                {
-                    foreach (var brbId in allBookings)
-                    {
-                        var brb = DataverseApi.Instance.Retrieve(
-                            "bookableresourcebooking",
-                            brbId,
-                            new Microsoft.Xrm.Sdk.Query.ColumnSet("acl_xoi_workflowjobid")
-                        );
-                        if (string.IsNullOrEmpty(brb.GetAttributeValue<string>("acl_xoi_workflowjobid")))
-                        {
-                            bookingId = brbId;
-                            break;
-                        }
-                    }
-                    if (bookingId == Guid.Empty && allBookings.Any())
-                        bookingId = allBookings.Last();
-                    _log.LogWarning($"Email match unavailable — positional fallback booking: {bookingId}");
-                }
+                if (bookingId == Guid.Empty && allBookings.Any())
+                    bookingId = allBookings.Last();
 
                 // =====================================================
                 // 4️⃣ Assign workflowJobId ONLY IF EMPTY
@@ -146,8 +127,7 @@ namespace XOI_Integration
                     _log.LogInformation(
                         "🔹 Workflow update detected — technician notes scenario");
 
-                    // Reuse already-fetched summary from step 3 to avoid duplicate API call
-                    var wfSummary = wfSummaryEarly ?? await xOi.GetJobSummaryWorkflowAsync(jobId, workflowJobId);
+                    var wfSummary = await xOi.GetJobSummaryWorkflowAsync(jobId, workflowJobId);
 
                     jobInfo.WorkSummary = wfSummary;
                     // ✅ Asset creation/update — ONLY here
