@@ -190,7 +190,9 @@ namespace XOI_Integration.XOiRepository.Helper
                     CompleteDate = DateTime.Now.ToString("MM/dd/yyyy"),
                     WorkSummary = doc?.WorkSummary?.SummaryText ?? "WO Summary is empty",
                     WorkflowId = workflowJobId,
-                    UserInitial = $"{assignee?.GivenName} {assignee?.FamilyName}"
+                    UserInitial = $"{assignee?.GivenName} {assignee?.FamilyName}",
+                    // 03042026 Populate assignee email for booking matching by technician
+                    AssigneeEmail = assignee?.Email
                 };
             }
             catch

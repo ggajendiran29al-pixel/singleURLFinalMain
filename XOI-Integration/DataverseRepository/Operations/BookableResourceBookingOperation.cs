@@ -657,6 +657,27 @@ namespace XOI_Integration.DataverseRepository.Operations
 
 
         // =========================================================
+        // 03042026 GET BOOKING BY ASSIGNEE EMAIL — matches technician email to booking
+        // Used to correctly route notes when multiple bookings share the same job
+        // =========================================================
+        public static async Task<Guid> GetBookingIdByAssigneeEmailAsync(string jobId, string assigneeEmail)
+        {
+            if (string.IsNullOrWhiteSpace(assigneeEmail))
+                return Guid.Empty;
+
+            var bookingIds = await GetBookableResourceBookingIdsAsync(jobId);
+
+            foreach (var brbId in bookingIds)
+            {
+                var tech = GetTechnicianInfoFromBooking(brbId);
+                if (string.Equals(tech.Email, assigneeEmail, StringComparison.OrdinalIgnoreCase))
+                    return brbId;
+            }
+
+            return Guid.Empty;
+        }
+
+        // =========================================================
         // GET ALL BOOKING IDs FOR ONE JOB
         // =========================================================
         public static async Task<List<Guid>> GetBookableResourceBookingIdsAsync(string jobId)
