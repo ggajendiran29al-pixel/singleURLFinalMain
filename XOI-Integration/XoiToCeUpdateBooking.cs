@@ -68,7 +68,10 @@ namespace XOI_Integration
                 _log.LogInformation($"workflowJobId received = {workflowJobId}");
 
                 // =====================================================
-                // 3️⃣ Resolve booking — positional first-empty
+                // 3️⃣ Resolve booking
+                // First check if this workflowJobId is already stored on a booking
+                // (handles webhook retries — prevents same workflowJobId written to multiple bookings)
+                // If not found, fall through to positional first-empty
                 // =====================================================
                 var allBookings =
                     await BookableResourceBookingOperation
@@ -76,23 +79,37 @@ namespace XOI_Integration
 
                 Guid bookingId = Guid.Empty;
 
-                foreach (var brbId in allBookings)
+                // Check if workflowJobId already assigned to a booking (idempotency)
+                if (!string.IsNullOrEmpty(workflowJobId))
                 {
-                    var brb = DataverseApi.Instance.Retrieve(
-                        "bookableresourcebooking",
-                        brbId,
-                        new Microsoft.Xrm.Sdk.Query.ColumnSet("acl_xoi_workflowjobid")
-                    );
-                    var existingWorkflowId = brb.GetAttributeValue<string>("acl_xoi_workflowjobid");
-                    if (string.IsNullOrEmpty(existingWorkflowId))
-                    {
-                        bookingId = brbId;
-                        break;
-                    }
+                    bookingId = await BookableResourceBookingOperation
+                        .GetBookingIdByWorkflowJobIdAsync(workflowJobId);
+
+                    if (bookingId != Guid.Empty)
+                        _log.LogInformation($"workflowJobId already mapped to booking {bookingId} — reusing");
                 }
 
-                if (bookingId == Guid.Empty && allBookings.Any())
-                    bookingId = allBookings.Last();
+                // Not yet assigned — positional first-empty
+                if (bookingId == Guid.Empty)
+                {
+                    foreach (var brbId in allBookings)
+                    {
+                        var brb = DataverseApi.Instance.Retrieve(
+                            "bookableresourcebooking",
+                            brbId,
+                            new Microsoft.Xrm.Sdk.Query.ColumnSet("acl_xoi_workflowjobid")
+                        );
+                        var existingWorkflowId = brb.GetAttributeValue<string>("acl_xoi_workflowjobid");
+                        if (string.IsNullOrEmpty(existingWorkflowId))
+                        {
+                            bookingId = brbId;
+                            break;
+                        }
+                    }
+
+                    if (bookingId == Guid.Empty && allBookings.Any())
+                        bookingId = allBookings.Last();
+                }
 
                 // =====================================================
                 // 4️⃣ Assign workflowJobId ONLY IF EMPTY
