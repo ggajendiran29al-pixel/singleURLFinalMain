@@ -77,29 +77,7 @@ public class XOiToBookableResourceDataHandler
                 result
             );
 
-            // ====================================================
-            // 4. FIX: Only correct Contribute URL *if truly needed*
-            // ====================================================
-            string finalUrl = result.ContributeToJobUrl;
-
-            if (!string.IsNullOrEmpty(finalUrl))
-            {
-                // Only replace if URL is INVALID (XOi bug pattern)
-                if (finalUrl.Contains("my-work/contribute?jobId="))
-                {
-                    _log.LogWarning("⚠ XOi bug detected: incorrect Contribute URL format. Replacing with ViewJob URL.");
-
-                    finalUrl = result.XoiVisionWebURL;
-                }
-
-                await BookableResourceBookingOperation.UpdateWebJobUrlOnBookingAsync(
-                    bookingId,
-                    finalUrl
-                );
-
-                _log.LogInformation("✔ Correct WebJob URL saved to booking");
-            }
-
+            // 03042026 Removed step 4: UpdateWebJobUrlOnBookingAsync was overwriting sisps_xoi_vision_webjoburl with ContributeToJob URL after it was correctly set in step 3
             _log.LogInformation("✅ Handler completed SUCCESSFULLY");
         }
         catch (Exception ex)
