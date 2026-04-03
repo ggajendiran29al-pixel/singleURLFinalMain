@@ -227,24 +227,26 @@ namespace XOI_Integration.DataverseRepository.Operations
         // =========================================================
         // NOTE CREATION WITH FIXED DUPLICATE CHECK
         // =========================================================
+        // 03042026 Added bookingId parameter — caller (XoiToCeUpdateBooking) already resolved the correct booking;
+        // removed internal GetBookingIdByWorkflowJobIdAsync lookup which was unreliable when acl_xoi_workflowjobid was not yet set
         public static async Task CreateBookableResourceBookingNoteAsync(
     ILogger log,
     XOiWorkSummaryToBookableResourceData summary,
     string jobId,
-    string workflowJobId)
+    string workflowJobId,
+    Guid bookingId)
         {
             log.LogInformation("Start creating notes (workflow-specific)");
 
-            // 1️⃣ Find correct booking via workflowJobId
-            Guid currentBookingId = await GetBookingIdByWorkflowJobIdAsync(workflowJobId);
+            Guid currentBookingId = bookingId;
 
             if (currentBookingId == Guid.Empty)
             {
-                log.LogWarning($"No booking found for workflowJobId '{workflowJobId}' — skipping note.");
+                log.LogWarning($"No booking resolved for workflowJobId '{workflowJobId}' — skipping note.");
                 return;
             }
 
-            // 2️⃣ Load notes only for this booking
+            // Load notes only for this booking
             var existingNotes = await GetBookableResourceBookingNotesForSingleBooking(currentBookingId);
 
             string shareLink = await GetBookableResourceBookingCustomerJobShareLinkAsync(currentBookingId);
@@ -653,6 +655,27 @@ namespace XOI_Integration.DataverseRepository.Operations
             };
         }
 
+
+        // =========================================================
+        // 03042026 GET BOOKING BY ASSIGNEE EMAIL — matches technician email to booking
+        // Used to correctly route notes when multiple bookings share the same job
+        // =========================================================
+        public static async Task<Guid> GetBookingIdByAssigneeEmailAsync(string jobId, string assigneeEmail)
+        {
+            if (string.IsNullOrWhiteSpace(assigneeEmail))
+                return Guid.Empty;
+
+            var bookingIds = await GetBookableResourceBookingIdsAsync(jobId);
+
+            foreach (var brbId in bookingIds)
+            {
+                var tech = GetTechnicianInfoFromBooking(brbId);
+                if (string.Equals(tech.Email, assigneeEmail, StringComparison.OrdinalIgnoreCase))
+                    return brbId;
+            }
+
+            return Guid.Empty;
+        }
 
         // =========================================================
         // GET ALL BOOKING IDs FOR ONE JOB

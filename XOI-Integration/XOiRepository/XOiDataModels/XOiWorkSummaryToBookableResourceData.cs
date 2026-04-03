@@ -9,11 +9,13 @@ namespace XOI_Integration.XOiRepository.XOiDataModels
     public class XOiWorkSummaryToBookableResourceData
     {
         public string WorkflowName { get; set; }
-        public string CompleteDate { get; set; }  
+        public string CompleteDate { get; set; }
         public string WorkSummary { get; set; }
         public string WorkflowId { get; set; }
         public string UserInitial { get; set; }
         public Guid CustomerAssetId { get; set; }
+        // 03042026 Added to carry assignee email from XOi for correct booking matching
+        public string AssigneeEmail { get; set; }
 
         public bool IsFilled()
         {
