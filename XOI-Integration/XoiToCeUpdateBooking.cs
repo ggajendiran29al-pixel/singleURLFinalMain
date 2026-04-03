@@ -100,28 +100,19 @@ namespace XOI_Integration
                 }
 
                 // =====================================================
-                // 4️⃣ Assign workflowJobId ONLY IF EMPTY
+                // 4️⃣ Assign workflowJobId — always update so each workflow maps to correct booking
+                // 03042026 Removed "only if empty" guard — it was causing notes to go to wrong booking
+                // when multiple workflows fire for the same job
                 // =====================================================
                 if (bookingId != Guid.Empty && !string.IsNullOrEmpty(workflowJobId))
                 {
-                    var currentValue =
-                        DataverseApi.Instance.Retrieve(
-                            "bookableresourcebooking",
+                    await BookableResourceBookingOperation
+                        .UpdateWorkflowJobIdOnBookingAsync(
                             bookingId,
-                            new Microsoft.Xrm.Sdk.Query.ColumnSet("acl_xoi_workflowjobid")
-                        )
-                        .GetAttributeValue<string>("acl_xoi_workflowjobid");
+                            workflowJobId);
 
-                    if (string.IsNullOrEmpty(currentValue))
-                    {
-                        await BookableResourceBookingOperation
-                            .UpdateWorkflowJobIdOnBookingAsync(
-                                bookingId,
-                                workflowJobId);
-
-                        _log.LogInformation(
-                            $"workflowJobId mapped to booking {bookingId}");
-                    }
+                    _log.LogInformation(
+                        $"workflowJobId mapped to booking {bookingId}");
                 }
 
                 // =====================================================
@@ -156,12 +147,14 @@ namespace XOI_Integration
                         _log.LogInformation(
                             "🟢 Technician entered notes — creating booking note");
 
+                        // 03042026 Pass resolved bookingId directly — avoids unreliable internal lookup
                         await BookableResourceBookingOperation
                             .CreateBookableResourceBookingNoteAsync(
                                 _log,
                                 wfSummary,
                                 jobId,
-                                workflowJobId);
+                                workflowJobId,
+                                bookingId);
                     }
 
                     // ✅ Association attempt (may or may not succeed yet)
