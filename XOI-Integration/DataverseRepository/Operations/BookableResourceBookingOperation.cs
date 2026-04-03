@@ -621,47 +621,6 @@ namespace XOI_Integration.DataverseRepository.Operations
 
 
         // =========================================================
-        // 04042026 GET BOOKING BY ASSIGNEE EMAIL — filters to technician's bookings first,
-        // then picks the first one with empty acl_xoi_workflowjobid.
-        // This ensures correct routing when multiple technicians share the same job,
-        // while still handling multiple bookings per technician in order.
-        // =========================================================
-        public static async Task<Guid> GetBookingIdByAssigneeEmailAsync(string jobId, string assigneeEmail)
-        {
-            if (string.IsNullOrWhiteSpace(assigneeEmail))
-                return Guid.Empty;
-
-            var bookingIds = await GetBookableResourceBookingIdsAsync(jobId);
-
-            // Filter to only bookings belonging to this technician
-            var techBookings = new List<Guid>();
-            foreach (var brbId in bookingIds)
-            {
-                var tech = GetTechnicianInfoFromBooking(brbId);
-                if (string.Equals(tech.Email, assigneeEmail, StringComparison.OrdinalIgnoreCase))
-                    techBookings.Add(brbId);
-            }
-
-            if (!techBookings.Any())
-                return Guid.Empty;
-
-            // Among this technician's bookings, pick the first with empty acl_xoi_workflowjobid
-            foreach (var brbId in techBookings)
-            {
-                var brb = DataverseApi.Instance.Retrieve(
-                    "bookableresourcebooking",
-                    brbId,
-                    new ColumnSet("acl_xoi_workflowjobid")
-                );
-                if (string.IsNullOrEmpty(brb.GetAttributeValue<string>("acl_xoi_workflowjobid")))
-                    return brbId;
-            }
-
-            // All this technician's bookings are filled — fallback to last one
-            return techBookings.Last();
-        }
-
-        // =========================================================
         // GET ALL BOOKING IDs FOR ONE JOB
         // =========================================================
         public static async Task<List<Guid>> GetBookableResourceBookingIdsAsync(string jobId)
