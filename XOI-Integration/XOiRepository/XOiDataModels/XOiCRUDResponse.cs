@@ -1,6 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Text.Json.Serialization;
+// 03042026 Removed System.Text.Json.Serialization - GraphQL client uses Newtonsoft; this import was pulling in System.Text.Json 7.0.0 incompatible with net6.0
 
 namespace XOI_Integration.XOiRepository.XOiDataModels
 {
@@ -41,14 +41,9 @@ namespace XOI_Integration.XOiRepository.XOiDataModels
     // ------------------------------------------
     public class DeepLinks
     {
-
-        // VisionWeb in C# maps to 'visionWeb' in GraphQL JSON
-        [JsonPropertyName("visionWeb")]
+        // 03042026 Removed [JsonPropertyName] attributes - Newtonsoft handles case-insensitive matching automatically; System.Text.Json attributes were being ignored and pulling in incompatible assembly
         public VisionWeb VisionWeb { get; set; }
-       // public ContributeToJob ContributeToJob { get; set; }    
         public VisionMobile VisionMobile { get; set; }
-        //public VisionWeb VisionWeb { get; set; }
-        [JsonPropertyName("ContributeToJob")]
         public ContributeToJob ContributeToJob { get; set; }
     }
 
