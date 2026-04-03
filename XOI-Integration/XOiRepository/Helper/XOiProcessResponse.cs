@@ -93,9 +93,8 @@ namespace XOI_Integration.XOiRepository.Helper
     ?? job.DeepLinks?.ContributeToJob?.Url;
                 //result.ContributeToJobUrl = job.DeepLinks?.ContributeToJob?.Url;
 
-                // 02042026 Fix: VisionMobile.EditJob.Url is a mobile app deep-link (not a valid web URL); changed to VisionWeb.ViewJob.Url so the link is clickable in Dynamics
-                //result.XoiVisionJobURL = job.DeepLinks?.VisionMobile?.EditJob?.Url;
-                result.XoiVisionJobURL = job.DeepLinks?.VisionWeb?.ViewJob?.Url;
+                // 03042026 Reverted: XoiVisionJobURL must be the mobile deep-link (xoi-vision://); VisionWeb.ViewJob.Url goes to webjoburl not here
+                result.XoiVisionJobURL = job.DeepLinks?.VisionMobile?.EditJob?.Url;
 
                 return result;
             }

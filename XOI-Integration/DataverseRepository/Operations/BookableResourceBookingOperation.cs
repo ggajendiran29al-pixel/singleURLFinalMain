@@ -27,14 +27,8 @@ namespace XOI_Integration.DataverseRepository.Operations
             entity["sisps_xoi_vision_joburl"] = x.XoiVisionJobURL;
             entity["sisps_xoi_vision_jobshareurl"] = x.XoiVisionJobShareURL;
 
-            string finalWebUrl =
-                !string.IsNullOrEmpty(x.ContributeToJobUrl)
-                    ? x.ContributeToJobUrl
-                    : x.XoiVisionWebURL;
-
-            entity["sisps_xoi_vision_webjoburl"] = finalWebUrl;
-            //02042026 Removed: duplicate sisps_xoi_vision_joburl assignment was overwriting the correct value set above and clearing the field to null
-            //entity["sisps_xoi_vision_joburl"] = finalWebUrl;
+            // 03042026 Always use VisionWeb.ViewJob URL for webjoburl — ContributeToJob URL belongs to a different field and must not go here
+            entity["sisps_xoi_vision_webjoburl"] = x.XoiVisionWebURL;
 
             await DataverseApi.Instance.UpdateAsync(entity);
         }
