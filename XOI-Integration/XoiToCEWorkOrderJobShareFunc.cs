@@ -47,12 +47,6 @@ namespace XOI_Integration
                         firstBookingId
                     );
 
-                    // IMPORTANT: Store workflowId as empty placeholder
-                    await BookableResourceBookingOperation.UpdateWorkflowJobIdOnBookingAsync(
-                        bookingId,
-                        "" // will be updated later by XoiToCeUpdateBooking
-                    );
-
                     log.LogInformation("✔ Copied job details from first booking to secondary booking");
                     return;
                 }
@@ -71,12 +65,6 @@ namespace XOI_Integration
                 jobData,
                 bookingId,
                 bookingJobId
-            );
-
-            // Now store empty workflowJobId placeholder
-            await BookableResourceBookingOperation.UpdateWorkflowJobIdOnBookingAsync(
-                bookingId,
-                ""
             );
 
             log.LogInformation("Create integration logs");

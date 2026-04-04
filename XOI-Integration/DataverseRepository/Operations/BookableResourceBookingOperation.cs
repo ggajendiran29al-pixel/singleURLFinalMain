@@ -681,5 +681,72 @@ namespace XOI_Integration.DataverseRepository.Operations
             return result.Entities.FirstOrDefault()?.Id ?? Guid.Empty;
         }
 
+        // =========================================================
+        // RESOLVE BOOKING BY TECHNICIAN + CLOSEST SCHEDULED DATE
+        // Uses webhook FiredAt (actual completion time) vs booking starttime
+        // to correctly identify which booking a technician completed
+        // when same technician has multiple bookings on same job
+        // =========================================================
+        public static async Task<Guid> ResolveBookingByTechnicianAndDateAsync(
+            ILogger log,
+            List<Guid> bookingIds,
+            string assigneeEmail,
+            DateTime firedAt)
+        {
+            var candidates = new List<(Guid Id, DateTime? Start, string Email, string WorkflowId)>();
+
+            foreach (var id in bookingIds)
+            {
+                var brb = DataverseApi.Instance.Retrieve(
+                    "bookableresourcebooking",
+                    id,
+                    new ColumnSet("starttime", "acl_xoi_workflowjobid")
+                );
+
+                var start = brb.Contains("starttime")
+                    ? brb.GetAttributeValue<DateTime>("starttime")
+                    : (DateTime?)null;
+
+                var wfId = brb.GetAttributeValue<string>("acl_xoi_workflowjobid");
+                var tech = GetTechnicianInfoFromBooking(id);
+
+                candidates.Add((id, start, tech.Email, wfId));
+            }
+
+            // 1. Filter by technician email
+            var techMatches = candidates
+                .Where(c => !string.IsNullOrEmpty(assigneeEmail) &&
+                            string.Equals(c.Email, assigneeEmail, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (!techMatches.Any())
+            {
+                log.LogWarning("No technician email match — using all bookings");
+                techMatches = candidates;
+            }
+
+            // 2. Exclude bookings already mapped to a workflow
+            var unmapped = techMatches
+                .Where(c => string.IsNullOrWhiteSpace(c.WorkflowId))
+                .ToList();
+
+            if (!unmapped.Any())
+            {
+                log.LogWarning("All technician bookings already mapped — using mapped ones as fallback");
+                unmapped = techMatches;
+            }
+
+            // 3. Pick closest scheduled start to webhook FiredAt
+            var selected = unmapped
+                .OrderBy(c =>
+                    c.Start.HasValue
+                        ? Math.Abs((c.Start.Value - firedAt).TotalMinutes)
+                        : double.MaxValue)
+                .First();
+
+            log.LogInformation($"ResolveBookingByTechnicianAndDate → booking {selected.Id} (start: {selected.Start}, firedAt: {firedAt})");
+            return selected.Id;
+        }
+
     }
 }
