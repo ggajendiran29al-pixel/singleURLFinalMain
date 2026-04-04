@@ -234,16 +234,15 @@ namespace XOI_Integration.DataverseRepository.Operations
     ILogger log,
     XOiWorkSummaryToBookableResourceData summary,
     string jobId,
-    string workflowJobId)
+    Guid bookingId)
         {
             log.LogInformation("Start creating notes (workflow-specific)");
 
-            // Find correct booking via workflowJobId — set by XoiToCeUpdateBooking step 4
-            Guid currentBookingId = await GetBookingIdByWorkflowJobIdAsync(workflowJobId);
+            Guid currentBookingId = bookingId;
 
             if (currentBookingId == Guid.Empty)
             {
-                log.LogWarning($"No booking found for workflowJobId '{workflowJobId}' — skipping note.");
+                log.LogWarning("No booking resolved — skipping note.");
                 return;
             }
 
