@@ -106,28 +106,17 @@ namespace XOI_Integration
                 }
 
                 // =====================================================
-                // 4️⃣ Assign workflowJobId ONLY IF EMPTY
+                // 4️⃣ Always write workflowJobId to resolved booking
+                // Overwrites previous value to support multiple workflows on same booking
                 // =====================================================
                 if (bookingId != Guid.Empty && !string.IsNullOrEmpty(workflowJobId))
                 {
-                    var currentValue =
-                        DataverseApi.Instance.Retrieve(
-                            "bookableresourcebooking",
+                    await BookableResourceBookingOperation
+                        .UpdateWorkflowJobIdOnBookingAsync(
                             bookingId,
-                            new Microsoft.Xrm.Sdk.Query.ColumnSet("acl_xoi_workflowjobid")
-                        )
-                        .GetAttributeValue<string>("acl_xoi_workflowjobid");
+                            workflowJobId);
 
-                    if (string.IsNullOrEmpty(currentValue))
-                    {
-                        await BookableResourceBookingOperation
-                            .UpdateWorkflowJobIdOnBookingAsync(
-                                bookingId,
-                                workflowJobId);
-
-                        _log.LogInformation(
-                            $"workflowJobId mapped to booking {bookingId}");
-                    }
+                    _log.LogInformation($"workflowJobId {workflowJobId} mapped to booking {bookingId}");
                 }
 
                 // =====================================================
@@ -166,7 +155,7 @@ namespace XOI_Integration
                                 _log,
                                 wfSummary,
                                 jobId,
-                                workflowJobId);
+                                bookingId);
                     }
 
                     // ✅ Association attempt (may or may not succeed yet)
