@@ -89,26 +89,20 @@ namespace XOI_Integration
                         _log.LogInformation($"workflowJobId already mapped to booking {bookingId} — reusing");
                 }
 
-                // Not yet assigned — positional first-empty
-                if (bookingId == Guid.Empty)
+                // Not yet assigned — resolve by technician email + closest scheduled date to webhook FiredAt
+                XOiWorkSummaryToBookableResourceData wfSummaryForStep5 = null;
+                if (bookingId == Guid.Empty && allBookings.Any())
                 {
-                    foreach (var brbId in allBookings)
-                    {
-                        var brb = DataverseApi.Instance.Retrieve(
-                            "bookableresourcebooking",
-                            brbId,
-                            new Microsoft.Xrm.Sdk.Query.ColumnSet("acl_xoi_workflowjobid")
-                        );
-                        var existingWorkflowId = brb.GetAttributeValue<string>("acl_xoi_workflowjobid");
-                        if (string.IsNullOrEmpty(existingWorkflowId))
-                        {
-                            bookingId = brbId;
-                            break;
-                        }
-                    }
+                    wfSummaryForStep5 = await xOi.GetJobSummaryWorkflowAsync(jobId, workflowJobId);
+                    string assigneeEmail = wfSummaryForStep5?.AssigneeEmail;
+                    DateTime firedAt = webhook.FiredAt != default ? webhook.FiredAt : DateTime.UtcNow;
 
-                    if (bookingId == Guid.Empty && allBookings.Any())
-                        bookingId = allBookings.Last();
+                    bookingId = await BookableResourceBookingOperation
+                        .ResolveBookingByTechnicianAndDateAsync(
+                            _log,
+                            allBookings,
+                            assigneeEmail,
+                            firedAt);
                 }
 
                 // =====================================================
@@ -144,7 +138,8 @@ namespace XOI_Integration
                     _log.LogInformation(
                         "🔹 Workflow update detected — technician notes scenario");
 
-                    var wfSummary = await xOi.GetJobSummaryWorkflowAsync(jobId, workflowJobId);
+                    // Reuse summary already fetched in step 3 if available, otherwise fetch now
+                    var wfSummary = wfSummaryForStep5 ?? await xOi.GetJobSummaryWorkflowAsync(jobId, workflowJobId);
 
                     jobInfo.WorkSummary = wfSummary;
                     // ✅ Asset creation/update — ONLY here
