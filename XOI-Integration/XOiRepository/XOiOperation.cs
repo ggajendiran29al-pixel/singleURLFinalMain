@@ -289,6 +289,8 @@ query GetJobSummary($id: ID!, $workflowId: ID) {
         {
             var response = await GetJobSummaryResponseAsync(jobId, workflowJobId);
 
+            _log.LogInformation($"XOi raw getJobSummary response (workflowJobId={workflowJobId}): {Newtonsoft.Json.JsonConvert.SerializeObject(response?.Data?.GetJobSummary?.JobSummary)}");
+
             return XOiProcessResponse.BuildXOiWorkSummaryToBookableResourceData(
                 _log, response, workflowJobId);
         }
