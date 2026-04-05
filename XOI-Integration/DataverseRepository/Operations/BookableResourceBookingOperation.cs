@@ -681,6 +681,14 @@ namespace XOI_Integration.DataverseRepository.Operations
         }
 
         // =========================================================
+        // GET TECHNICIAN EMAIL FOR A BOOKING (public wrapper)
+        // =========================================================
+        public static async Task<string> GetTechnicianEmailFromBookingAsync(Guid bookingId)
+        {
+            return await Task.Run(() => GetTechnicianInfoFromBooking(bookingId).Email);
+        }
+
+        // =========================================================
         // RESOLVE BOOKING BY TECHNICIAN + CLOSEST SCHEDULED DATE
         // Uses webhook FiredAt (actual completion time) vs booking starttime
         // to correctly identify which booking a technician completed
