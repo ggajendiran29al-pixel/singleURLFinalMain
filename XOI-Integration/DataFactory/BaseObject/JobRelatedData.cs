@@ -10,7 +10,7 @@ namespace XOI_Integration.DataFactory.BaseObject
 {
     public abstract class JobRelatedData
     {
-        public string AssigneeIds { get; protected set; }
+        public string AssigneeIds { get; set; }
         public string CustomerName { get; protected set; }
         public string JobLocation { get; protected set; }
         public string OrderNumber { get; protected set; }
