@@ -94,14 +94,12 @@ namespace XOI_Integration
                 if (bookingId == Guid.Empty && allBookings.Any())
                 {
                     wfSummaryForStep5 = await xOi.GetJobSummaryWorkflowAsync(jobId, workflowJobId);
-                    string assigneeEmail = wfSummaryForStep5?.AssigneeEmail;
                     DateTime firedAt = webhook.FiredAt != default ? webhook.FiredAt : DateTime.UtcNow;
 
                     bookingId = await BookableResourceBookingOperation
                         .ResolveBookingByTechnicianAndDateAsync(
                             _log,
                             allBookings,
-                            assigneeEmail,
                             firedAt);
                 }
 

@@ -299,8 +299,10 @@ query GetJobSummary($id: ID!, $workflowId: ID) {
         private async Task<GraphQLResponse<XOiJobSummaryResponse>> GetJobSummaryResponseAsync(
             string jobId, string workflowJobId)
         {
-            if (jobSummaryCache.ContainsKey(jobId))
-                return jobSummaryCache[jobId];
+            // Cache key must include workflowJobId — different workflows on same job return different assignees
+            string cacheKey = $"{jobId}_{workflowJobId}";
+            if (jobSummaryCache.ContainsKey(cacheKey))
+                return jobSummaryCache[cacheKey];
 
             var response = await _xoiAPI.SendRequestAsync<XOiJobSummaryResponse>(
                 requests[OperationType.GetJobSummary],
@@ -308,7 +310,7 @@ query GetJobSummary($id: ID!, $workflowId: ID) {
 
             if (response.Data != null)
             {
-                jobSummaryCache[jobId] = response;
+                jobSummaryCache[cacheKey] = response;
                 return response;
             }
 

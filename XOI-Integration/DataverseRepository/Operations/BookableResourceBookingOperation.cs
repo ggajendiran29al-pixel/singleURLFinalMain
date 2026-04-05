@@ -689,7 +689,6 @@ namespace XOI_Integration.DataverseRepository.Operations
         public static async Task<Guid> ResolveBookingByTechnicianAndDateAsync(
             ILogger log,
             List<Guid> bookingIds,
-            string assigneeEmail,
             DateTime firedAt)
         {
             var candidates = new List<(Guid Id, DateTime? Start, string Email, string WorkflowId)>();
@@ -712,30 +711,18 @@ namespace XOI_Integration.DataverseRepository.Operations
                 candidates.Add((id, start, tech.Email, wfId));
             }
 
-            // 1. Filter by technician email
-            var techMatches = candidates
-                .Where(c => !string.IsNullOrEmpty(assigneeEmail) &&
-                            string.Equals(c.Email, assigneeEmail, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            if (!techMatches.Any())
-            {
-                log.LogWarning("No technician email match — using all bookings");
-                techMatches = candidates;
-            }
-
-            // 2. Exclude bookings already mapped to a workflow
-            var unmapped = techMatches
+            // 1. Exclude bookings already mapped to a workflow
+            var unmapped = candidates
                 .Where(c => string.IsNullOrWhiteSpace(c.WorkflowId))
                 .ToList();
 
             if (!unmapped.Any())
             {
-                log.LogWarning("All technician bookings already mapped — using mapped ones as fallback");
-                unmapped = techMatches;
+                log.LogWarning("All bookings already mapped — using all as fallback");
+                unmapped = candidates;
             }
 
-            // 3. Pick closest scheduled start to webhook FiredAt
+            // 2. Pick closest scheduled starttime to webhook FiredAt
             var selected = unmapped
                 .OrderBy(c =>
                     c.Start.HasValue
