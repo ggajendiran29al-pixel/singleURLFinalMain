@@ -184,25 +184,6 @@ query GetJobSummary($id: ID!, $workflowId: ID) {
       jobId
       documentation {
         workflowName
-        workflowJobId
-        submittedBy {
-          id
-          email
-          given_name
-          family_name
-        }
-        createdBy {
-          id
-          email
-          given_name
-          family_name
-        }
-        assignee {
-          id
-          email
-          given_name
-          family_name
-        }
         traits
         tags
         note { text }
