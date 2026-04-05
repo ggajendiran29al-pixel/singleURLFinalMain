@@ -689,6 +689,35 @@ namespace XOI_Integration.DataverseRepository.Operations
         }
 
         // =========================================================
+        // GET OWNER EMAIL FROM BOOKING'S XOi VISION JOB URL
+        // Reads sisps_xoi_vision_joburl and extracts the owner field from the payload
+        // More reliable than XOi assignees which are always job-level
+        // =========================================================
+        public static string GetOwnerEmailFromJobUrl(Guid bookingId)
+        {
+            var booking = DataverseApi.Instance.Retrieve(
+                "bookableresourcebooking",
+                bookingId,
+                new ColumnSet("sisps_xoi_vision_joburl")
+            );
+
+            string jobUrl = booking.GetAttributeValue<string>("sisps_xoi_vision_joburl");
+            if (string.IsNullOrEmpty(jobUrl))
+                return null;
+
+            const string payloadKey = "?payload=";
+            int payloadIndex = jobUrl.IndexOf(payloadKey, StringComparison.OrdinalIgnoreCase);
+            if (payloadIndex < 0)
+                return null;
+
+            string encodedPayload = jobUrl.Substring(payloadIndex + payloadKey.Length);
+            string jsonPayload = Uri.UnescapeDataString(encodedPayload);
+
+            var payload = Newtonsoft.Json.Linq.JObject.Parse(jsonPayload);
+            return payload["owner"]?.ToString();
+        }
+
+        // =========================================================
         // RESOLVE BOOKING BY TECHNICIAN + CLOSEST SCHEDULED DATE
         // Uses webhook FiredAt (actual completion time) vs booking starttime
         // to correctly identify which booking a technician completed
@@ -715,12 +744,15 @@ namespace XOI_Integration.DataverseRepository.Operations
                     : (DateTime?)null;
 
                 var wfId = brb.GetAttributeValue<string>("acl_xoi_workflowjobid");
-                var tech = GetTechnicianInfoFromBooking(id);
 
-                candidates.Add((id, start, tech.Email, wfId));
+                // Use owner email from stored XOi job URL — reliable per booking, unlike XOi assignees which are job-level
+                string ownerEmail = GetOwnerEmailFromJobUrl(id);
+                log.LogInformation($"Booking {id} — ownerEmail from URL: {ownerEmail}, starttime: {start}");
+
+                candidates.Add((id, start, ownerEmail, wfId));
             }
 
-            // 1. Filter by technician email (now reliable — cache key includes workflowJobId)
+            // 1. Filter by owner email from booking's stored XOi URL (Dynamics) — not XOi assignees
             var techMatches = !string.IsNullOrEmpty(assigneeEmail)
                 ? candidates
                     .Where(c => string.Equals(c.Email, assigneeEmail, StringComparison.OrdinalIgnoreCase))
@@ -729,11 +761,11 @@ namespace XOI_Integration.DataverseRepository.Operations
 
             if (!techMatches.Any())
             {
-                log.LogWarning($"No bookings matched email '{assigneeEmail}' — using all bookings");
+                log.LogWarning($"No bookings matched owner email '{assigneeEmail}' from XOi URL — using all bookings");
                 techMatches = candidates;
             }
 
-            log.LogInformation($"Email filter '{assigneeEmail}' matched {techMatches.Count} booking(s)");
+            log.LogInformation($"Owner email filter '{assigneeEmail}' matched {techMatches.Count} booking(s)");
 
             // 2. Prefer unmapped bookings — fallback to all tech bookings if all mapped (second workflow scenario)
             var pool = techMatches.Where(c => string.IsNullOrWhiteSpace(c.WorkflowId)).ToList();
