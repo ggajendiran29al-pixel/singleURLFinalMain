@@ -689,6 +689,7 @@ namespace XOI_Integration.DataverseRepository.Operations
         public static async Task<Guid> ResolveBookingByTechnicianAndDateAsync(
             ILogger log,
             List<Guid> bookingIds,
+            string assigneeEmail,
             DateTime firedAt)
         {
             var candidates = new List<(Guid Id, DateTime? Start, string Email, string WorkflowId)>();
@@ -711,26 +712,38 @@ namespace XOI_Integration.DataverseRepository.Operations
                 candidates.Add((id, start, tech.Email, wfId));
             }
 
-            // 1. Exclude bookings already mapped to a workflow
-            var unmapped = candidates
-                .Where(c => string.IsNullOrWhiteSpace(c.WorkflowId))
-                .ToList();
+            // 1. Filter by technician email (now reliable — cache key includes workflowJobId)
+            var techMatches = !string.IsNullOrEmpty(assigneeEmail)
+                ? candidates
+                    .Where(c => string.Equals(c.Email, assigneeEmail, StringComparison.OrdinalIgnoreCase))
+                    .ToList()
+                : candidates;
 
-            if (!unmapped.Any())
+            if (!techMatches.Any())
             {
-                log.LogWarning("All bookings already mapped — using all as fallback");
-                unmapped = candidates;
+                log.LogWarning($"No bookings matched email '{assigneeEmail}' — using all bookings");
+                techMatches = candidates;
             }
 
-            // 2. Pick closest scheduled starttime to webhook FiredAt
-            var selected = unmapped
+            log.LogInformation($"Email filter '{assigneeEmail}' matched {techMatches.Count} booking(s)");
+
+            // 2. Prefer unmapped bookings — fallback to all tech bookings if all mapped (second workflow scenario)
+            var pool = techMatches.Where(c => string.IsNullOrWhiteSpace(c.WorkflowId)).ToList();
+            if (!pool.Any())
+            {
+                log.LogWarning("All technician bookings already mapped — second workflow scenario, using all tech bookings");
+                pool = techMatches;
+            }
+
+            // 3. Pick closest scheduled starttime to webhook FiredAt
+            var selected = pool
                 .OrderBy(c =>
                     c.Start.HasValue
                         ? Math.Abs((c.Start.Value - firedAt).TotalMinutes)
                         : double.MaxValue)
                 .First();
 
-            log.LogInformation($"ResolveBookingByTechnicianAndDate → booking {selected.Id} (start: {selected.Start}, firedAt: {firedAt})");
+            log.LogInformation($"ResolveBookingByTechnicianAndDate → booking {selected.Id} (start: {selected.Start}, email: {selected.Email}, firedAt: {firedAt})");
             return selected.Id;
         }
 

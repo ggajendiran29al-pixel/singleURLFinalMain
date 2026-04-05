@@ -96,10 +96,13 @@ namespace XOI_Integration
                     wfSummaryForStep5 = await xOi.GetJobSummaryWorkflowAsync(jobId, workflowJobId);
                     DateTime firedAt = webhook.FiredAt != default ? webhook.FiredAt : DateTime.UtcNow;
 
+                    _log.LogInformation($"Resolving booking — assigneeEmail: {wfSummaryForStep5?.AssigneeEmail}, firedAt: {firedAt}");
+
                     bookingId = await BookableResourceBookingOperation
                         .ResolveBookingByTechnicianAndDateAsync(
                             _log,
                             allBookings,
+                            wfSummaryForStep5?.AssigneeEmail,
                             firedAt);
                 }
 
