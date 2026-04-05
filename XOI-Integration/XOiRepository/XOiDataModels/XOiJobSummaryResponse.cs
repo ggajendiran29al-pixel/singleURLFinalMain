@@ -39,10 +39,6 @@ namespace XOI_Integration.XOiRepository.XOiDataModels
     public class Documentation
     {
         public string WorkflowName { get; set; }
-        public string WorkflowJobId { get; set; }
-        public Assginees SubmittedBy { get; set; }
-        public Assginees CreatedBy { get; set; }
-        public Assginees Assignee { get; set; }
         public List<string> Traits { get; set; }
         public List<object> Tags { get; set; }
         public Note Note { get; set; }
