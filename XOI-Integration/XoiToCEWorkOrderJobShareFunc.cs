@@ -32,12 +32,22 @@ namespace XOI_Integration
             JobRelatedData jobData = await JobRelatedDataFactory.CreateAsync(bookingId);
             await jobData.LoadData();
 
-            // 1️⃣ Check if WorkOrder already has an XOi job
-            var existingJobId = await WorkOrderOperation.GetXOiJobIdAsync(jobData.WorkOrderId);
+            bool isProject = jobData.ProjectId != Guid.Empty;
+            bool isWorkOrder = jobData.WorkOrderId != Guid.Empty;
+
+            log.LogInformation($"Booking type — WorkOrder: {isWorkOrder}, Project: {isProject}");
+
+            // 1️⃣ Check if parent entity already has an XOi job
+            string existingJobId = null;
+
+            if (isWorkOrder)
+                existingJobId = await WorkOrderOperation.GetXOiJobIdAsync(jobData.WorkOrderId);
+            else if (isProject)
+                existingJobId = await ProjectOperation.GetXOiJobIdAsync(jobData.ProjectId);
 
             if (!string.IsNullOrEmpty(existingJobId))
             {
-                log.LogInformation($"Reusing WorkOrder job: {existingJobId}");
+                log.LogInformation($"Reusing existing job: {existingJobId}");
 
                 Guid firstBookingId = await BookableResourceBookingOperation.GetBookableResourceBookingIdAsync(existingJobId);
 
@@ -50,8 +60,7 @@ namespace XOI_Integration
                         firstBookingId
                     );
 
-                    // Get all bookings for this job and merge all technician emails into XOi assigneeIds
-                    // This ensures XOi knows about all technicians so per-workflow assignee email is correct
+                    // Merge all technician emails and update XOi assignees
                     var allBookingIds = await BookableResourceBookingOperation.GetBookableResourceBookingIdsAsync(existingJobId);
                     var allEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var bId in allBookingIds)
@@ -86,6 +95,15 @@ namespace XOI_Integration
                 bookingId,
                 bookingJobId
             );
+
+            // 3️⃣ Store XOi job ID on parent entity for reuse by subsequent bookings
+            if (!string.IsNullOrEmpty(xData?.XOiVisionJobId))
+            {
+                if (isWorkOrder)
+                    await WorkOrderOperation.UpdateXOiJobIdOnWorkOrderAsync(jobData.WorkOrderId, xData.XOiVisionJobId);
+                else if (isProject)
+                    await ProjectOperation.UpdateXOiJobIdOnProjectAsync(jobData.ProjectId, xData.XOiVisionJobId);
+            }
 
             log.LogInformation("Create integration logs");
             await IntegrationLogOperation.CreateLogAsync(bookingId, xData);
