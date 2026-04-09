@@ -159,5 +159,33 @@ namespace XOI_Integration.DataFactory.InheritedObjects.OperationsForInheritedObj
 
             return response.Entities.FirstOrDefault()?.GetAttributeValue<string>("sis_workdetails");
         }
+
+        // -------------------------------------------------------
+        // XOi JOB ID STORAGE ON PROJECT
+        // -------------------------------------------------------
+        public static async Task<string> GetXOiJobIdAsync(Guid projectId)
+        {
+            if (projectId == Guid.Empty)
+                return null;
+
+            var entity = await Task.Run(() =>
+                DataverseApi.Instance.Retrieve(
+                    "sis_project",
+                    projectId,
+                    new Microsoft.Xrm.Sdk.Query.ColumnSet("acl_xoi_vision_jobid")
+                ));
+
+            return entity?.GetAttributeValue<string>("acl_xoi_vision_jobid");
+        }
+
+        public static async Task UpdateXOiJobIdOnProjectAsync(Guid projectId, string xOiJobId)
+        {
+            if (projectId == Guid.Empty || string.IsNullOrEmpty(xOiJobId))
+                return;
+
+            Entity project = new Entity("sis_project") { Id = projectId };
+            project["acl_xoi_vision_jobid"] = xOiJobId;
+            await Task.Run(() => DataverseApi.Instance.Update(project));
+        }
     }
 }

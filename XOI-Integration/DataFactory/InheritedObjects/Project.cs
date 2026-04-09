@@ -17,6 +17,7 @@ namespace XOI_Integration.DataFactory.InheritedObjects
             ProjectOperation operation = new ProjectOperation(BookableResourceBookingId);
             CustomerInfo customerInfo = await operation.ProjectGetCustomerInfoAsync();
 
+            ProjectId = await operation.GetProjectIdAsync();
             AssigneeIds = string.Join(",", await GetResourcesAsync());
             CustomerName = CustomerName = customerInfo.Name;
             JobLocation = await operation.ProjectGetJobLocationAsync(customerInfo);
