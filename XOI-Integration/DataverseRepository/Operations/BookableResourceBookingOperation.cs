@@ -718,10 +718,10 @@ namespace XOI_Integration.DataverseRepository.Operations
         }
 
         // =========================================================
-        // RESOLVE BOOKING BY TECHNICIAN + CLOSEST SCHEDULED DATE
-        // Uses webhook FiredAt (actual completion time) vs booking starttime
-        // to correctly identify which booking a technician completed
-        // when same technician has multiple bookings on same job
+        // RESOLVE BOOKING BY CLOSEST SCHEDULED DATE (UNMAPPED FIRST)
+        // XOi Assignees is job-level — always returns the job creator's email,
+        // not the per-workflow submitter. Email filtering is therefore unreliable
+        // and has been removed. Resolution uses unmapped-first + closest starttime.
         // =========================================================
         public static async Task<Guid> ResolveBookingByTechnicianAndDateAsync(
             ILogger log,
@@ -729,7 +729,10 @@ namespace XOI_Integration.DataverseRepository.Operations
             string assigneeEmail,
             DateTime firedAt)
         {
-            var candidates = new List<(Guid Id, DateTime? Start, string Email, string WorkflowId)>();
+            // assigneeEmail is kept as a parameter for logging only — not used for filtering
+            log.LogInformation($"XOi assigneeEmail (job-level, not used for filtering): {assigneeEmail}");
+
+            var candidates = new List<(Guid Id, DateTime? Start, string OwnerEmail, string WorkflowId)>();
 
             foreach (var id in bookingIds)
             {
@@ -744,38 +747,24 @@ namespace XOI_Integration.DataverseRepository.Operations
                     : (DateTime?)null;
 
                 var wfId = brb.GetAttributeValue<string>("acl_xoi_workflowjobid");
-
-                // Use owner email from stored XOi job URL — reliable per booking, unlike XOi assignees which are job-level
                 string ownerEmail = GetOwnerEmailFromJobUrl(id);
-                log.LogInformation($"Booking {id} — ownerEmail from URL: {ownerEmail}, starttime: {start}");
+
+                log.LogInformation($"Booking {id} — owner: {ownerEmail}, starttime: {start}, mapped: {!string.IsNullOrEmpty(wfId)}");
 
                 candidates.Add((id, start, ownerEmail, wfId));
             }
 
-            // 1. Filter by owner email from booking's stored XOi URL (Dynamics) — not XOi assignees
-            var techMatches = !string.IsNullOrEmpty(assigneeEmail)
-                ? candidates
-                    .Where(c => string.Equals(c.Email, assigneeEmail, StringComparison.OrdinalIgnoreCase))
-                    .ToList()
-                : candidates;
+            // 1. Prefer unmapped bookings — the first technician to submit gets the earliest available slot
+            var pool = candidates.Where(c => string.IsNullOrWhiteSpace(c.WorkflowId)).ToList();
 
-            if (!techMatches.Any())
-            {
-                log.LogWarning($"No bookings matched owner email '{assigneeEmail}' from XOi URL — using all bookings");
-                techMatches = candidates;
-            }
-
-            log.LogInformation($"Owner email filter '{assigneeEmail}' matched {techMatches.Count} booking(s)");
-
-            // 2. Prefer unmapped bookings — fallback to all tech bookings if all mapped (second workflow scenario)
-            var pool = techMatches.Where(c => string.IsNullOrWhiteSpace(c.WorkflowId)).ToList();
             if (!pool.Any())
             {
-                log.LogWarning("All technician bookings already mapped — second workflow scenario, using all tech bookings");
-                pool = techMatches;
+                // All mapped — second workflow scenario: fall back to all bookings
+                log.LogWarning("All bookings already mapped — second workflow scenario, picking by closest starttime");
+                pool = candidates;
             }
 
-            // 3. Pick closest scheduled starttime to webhook FiredAt
+            // 2. Pick closest scheduled starttime to webhook FiredAt
             var selected = pool
                 .OrderBy(c =>
                     c.Start.HasValue
@@ -783,7 +772,7 @@ namespace XOI_Integration.DataverseRepository.Operations
                         : double.MaxValue)
                 .First();
 
-            log.LogInformation($"ResolveBookingByTechnicianAndDate → booking {selected.Id} (start: {selected.Start}, email: {selected.Email}, firedAt: {firedAt})");
+            log.LogInformation($"ResolveBookingByTechnicianAndDate → booking {selected.Id} (start: {selected.Start}, owner: {selected.OwnerEmail}, firedAt: {firedAt})");
             return selected.Id;
         }
 

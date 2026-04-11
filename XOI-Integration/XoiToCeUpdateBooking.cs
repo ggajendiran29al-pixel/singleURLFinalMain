@@ -89,7 +89,7 @@ namespace XOI_Integration
                         _log.LogInformation($"workflowJobId already mapped to booking {bookingId} — reusing");
                 }
 
-                // Not yet assigned — resolve by technician email + closest scheduled date to webhook FiredAt
+                // Not yet assigned — resolve by unmapped-first + closest scheduled date to webhook FiredAt
                 XOiWorkSummaryToBookableResourceData wfSummaryForStep5 = null;
                 if (bookingId == Guid.Empty && allBookings.Any())
                 {
