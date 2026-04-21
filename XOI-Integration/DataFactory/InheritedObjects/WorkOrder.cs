@@ -20,7 +20,7 @@ namespace XOI_Integration.DataFactory.InheritedObjects
             CustomerName = await operation.WorkOrderGetCustomerInfoAsync();
             JobLocation = await operation.WorkOrderGetJobLocationAsync();
             OrderNumber = $"WO-{await operation.WorkOrderGetProjectNumberAsync()}";
-            Label = OrderNumber;
+            Label = $"{CustomerName}\n{OrderNumber}\n{JobLocation}";
             Tags = Array.Empty<string>();
             TagSuggestions = Array.Empty<string>();
             InternalNote =
