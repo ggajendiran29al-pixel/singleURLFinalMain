@@ -718,10 +718,9 @@ namespace XOI_Integration.DataverseRepository.Operations
         }
 
         // =========================================================
-        // RESOLVE BOOKING BY CLOSEST SCHEDULED DATE (UNMAPPED FIRST)
-        // XOi Assignees is job-level — always returns the job creator's email,
-        // not the per-workflow submitter. Email filtering is therefore unreliable
-        // and has been removed. Resolution uses unmapped-first + closest starttime.
+        // RESOLVE BOOKING BY TECHNICIAN EMAIL + CLOSEST SCHEDULED DATE
+        // Primary: match assigneeEmail (from getJob(workflowJobId) — per-workflow).
+        // Fallback: unmapped-first + closest starttime (if email is missing or no match).
         // =========================================================
         public static async Task<Guid> ResolveBookingByTechnicianAndDateAsync(
             ILogger log,
@@ -729,8 +728,7 @@ namespace XOI_Integration.DataverseRepository.Operations
             string assigneeEmail,
             DateTime firedAt)
         {
-            // assigneeEmail is kept as a parameter for logging only — not used for filtering
-            log.LogInformation($"XOi assigneeEmail (job-level, not used for filtering): {assigneeEmail}");
+            log.LogInformation($"ResolveBookingByTechnicianAndDate — start. bookingCount: {bookingIds.Count}, assigneeEmail: '{assigneeEmail}', firedAt: {firedAt}");
 
             var candidates = new List<(Guid Id, DateTime? Start, string OwnerEmail, string WorkflowId)>();
 
@@ -749,31 +747,66 @@ namespace XOI_Integration.DataverseRepository.Operations
                 var wfId = brb.GetAttributeValue<string>("acl_xoi_workflowjobid");
                 string ownerEmail = GetOwnerEmailFromJobUrl(id);
 
-                log.LogInformation($"Booking {id} — owner: {ownerEmail}, starttime: {start}, mapped: {!string.IsNullOrEmpty(wfId)}");
+                log.LogInformation($"  Candidate booking {id} — ownerEmail: '{ownerEmail}', starttime: {start?.ToString("o") ?? "null"}, workflowJobId: '{wfId ?? "none"}'");
 
                 candidates.Add((id, start, ownerEmail, wfId));
             }
 
-            // 1. Prefer unmapped bookings — the first technician to submit gets the earliest available slot
-            var pool = candidates.Where(c => string.IsNullOrWhiteSpace(c.WorkflowId)).ToList();
-
-            if (!pool.Any())
+            // 1. Primary: match on technician email from getJob(workflowJobId)
+            if (!string.IsNullOrEmpty(assigneeEmail))
             {
-                // All mapped — second workflow scenario: fall back to all bookings
-                log.LogWarning("All bookings already mapped — second workflow scenario, picking by closest starttime");
-                pool = candidates;
+                log.LogInformation($"Strategy: email match. Looking for ownerEmail = '{assigneeEmail}' across {candidates.Count} candidate(s)");
+
+                var emailMatches = candidates
+                    .Where(c => string.Equals(c.OwnerEmail, assigneeEmail, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                log.LogInformation($"Email match result: {emailMatches.Count} match(es) found");
+
+                if (emailMatches.Count == 1)
+                {
+                    log.LogInformation($"ResolveBookingByTechnicianAndDate → EXACT EMAIL MATCH → booking {emailMatches[0].Id} (start: {emailMatches[0].Start?.ToString("o") ?? "null"})");
+                    return emailMatches[0].Id;
+                }
+
+                if (emailMatches.Count > 1)
+                {
+                    // Multiple bookings with the same technician — pick closest starttime among them
+                    var selected = emailMatches
+                        .OrderBy(c => c.Start.HasValue
+                            ? Math.Abs((c.Start.Value - firedAt).TotalMinutes)
+                            : double.MaxValue)
+                        .First();
+
+                    log.LogInformation($"ResolveBookingByTechnicianAndDate → EMAIL MATCH (multiple, picked closest) → booking {selected.Id} (start: {selected.Start?.ToString("o") ?? "null"})");
+                    return selected.Id;
+                }
+
+                log.LogWarning($"ResolveBookingByTechnicianAndDate → NO EMAIL MATCH for '{assigneeEmail}' — falling back to unmapped-first + closest starttime");
+            }
+            else
+            {
+                log.LogWarning("ResolveBookingByTechnicianAndDate — assigneeEmail is empty, skipping email match, using fallback");
             }
 
-            // 2. Pick closest scheduled starttime to webhook FiredAt
-            var selected = pool
+            // 2. Fallback: prefer unmapped bookings, then closest starttime
+            var unmapped = candidates.Where(c => string.IsNullOrWhiteSpace(c.WorkflowId)).ToList();
+            log.LogInformation($"Fallback strategy — unmapped bookings: {unmapped.Count} of {candidates.Count}");
+
+            var pool = unmapped.Any() ? unmapped : candidates;
+
+            if (!unmapped.Any())
+                log.LogWarning("All bookings already mapped — second workflow scenario, falling back to all candidates");
+
+            var fallbackSelected = pool
                 .OrderBy(c =>
                     c.Start.HasValue
                         ? Math.Abs((c.Start.Value - firedAt).TotalMinutes)
                         : double.MaxValue)
                 .First();
 
-            log.LogInformation($"ResolveBookingByTechnicianAndDate → booking {selected.Id} (start: {selected.Start}, owner: {selected.OwnerEmail}, firedAt: {firedAt})");
-            return selected.Id;
+            log.LogInformation($"ResolveBookingByTechnicianAndDate → FALLBACK (closest starttime) → booking {fallbackSelected.Id} (start: {fallbackSelected.Start?.ToString("o") ?? "null"}, owner: '{fallbackSelected.OwnerEmail}')");
+            return fallbackSelected.Id;
         }
 
     }
