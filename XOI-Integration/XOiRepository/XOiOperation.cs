@@ -184,6 +184,7 @@ query GetJobSummary($id: ID!, $workflowId: ID) {
       jobId
       documentation {
         workflowName
+        workflowJobId
         traits
         tags
         note { text }
