@@ -789,11 +789,43 @@ namespace XOI_Integration.DataverseRepository.Operations
                     return selected.Id;
                 }
 
-                log.LogWarning($"ResolveBookingByTechnicianAndDate → NO EMAIL MATCH among unmapped bookings for '{assigneeEmail}' — falling back to closest starttime among unmapped");
+                log.LogWarning($"ResolveBookingByTechnicianAndDate → NO EMAIL MATCH among unmapped bookings for '{assigneeEmail}' — trying all candidates (incl. mapped)");
             }
             else if (string.IsNullOrEmpty(assigneeEmail))
             {
                 log.LogWarning("ResolveBookingByTechnicianAndDate — assigneeEmail is empty, skipping email match, using fallback");
+            }
+
+            // 1b. Secondary: email match against ALL candidates (incl. already-mapped bookings).
+            //     Handles the case where the same technician submits a second workflow —
+            //     their booking is already mapped from the first workflow and was excluded above.
+            if (!string.IsNullOrEmpty(assigneeEmail))
+            {
+                var allEmailMatches = candidates
+                    .Where(c => string.Equals(c.OwnerEmail, assigneeEmail, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                log.LogInformation($"Email match result (all candidates incl. mapped): {allEmailMatches.Count} match(es) found");
+
+                if (allEmailMatches.Count == 1)
+                {
+                    log.LogInformation($"ResolveBookingByTechnicianAndDate → EXACT EMAIL MATCH (all candidates) → booking {allEmailMatches[0].Id} (start: {allEmailMatches[0].Start?.ToString("o") ?? "null"})");
+                    return allEmailMatches[0].Id;
+                }
+
+                if (allEmailMatches.Count > 1)
+                {
+                    var selected = allEmailMatches
+                        .OrderBy(c => c.Start.HasValue
+                            ? Math.Abs((c.Start.Value - firedAt).TotalMinutes)
+                            : double.MaxValue)
+                        .First();
+
+                    log.LogInformation($"ResolveBookingByTechnicianAndDate → EMAIL MATCH (multiple all candidates, picked closest) → booking {selected.Id} (start: {selected.Start?.ToString("o") ?? "null"})");
+                    return selected.Id;
+                }
+
+                log.LogWarning($"ResolveBookingByTechnicianAndDate → NO EMAIL MATCH across all candidates for '{assigneeEmail}' — using starttime fallback");
             }
 
             // 2. Fallback: prefer unmapped bookings by closest starttime.
