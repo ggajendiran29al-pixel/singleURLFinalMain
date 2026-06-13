@@ -752,51 +752,58 @@ namespace XOI_Integration.DataverseRepository.Operations
                 candidates.Add((id, start, ownerEmail, wfId));
             }
 
-            // 1. Primary: match on technician email from getJob(workflowJobId)
-            if (!string.IsNullOrEmpty(assigneeEmail))
-            {
-                log.LogInformation($"Strategy: email match. Looking for ownerEmail = '{assigneeEmail}' across {candidates.Count} candidate(s)");
+            // Split all candidates into unmapped (open) and mapped (already received a workflow)
+            var unmappedCandidates = candidates.Where(c => string.IsNullOrWhiteSpace(c.WorkflowId)).ToList();
+            var allMapped = !unmappedCandidates.Any();
 
-                var emailMatches = candidates
+            log.LogInformation($"Candidates — total: {candidates.Count}, unmapped (open): {unmappedCandidates.Count}, mapped: {candidates.Count - unmappedCandidates.Count}");
+
+            // 1. Primary: email match against UNMAPPED bookings only
+            //    Ensures a completed booking (same technician) is never picked over an open one.
+            //    e.g. Booking1(ResourceA, mapped) + Booking3(ResourceA, open) → picks Booking3
+            if (!string.IsNullOrEmpty(assigneeEmail) && unmappedCandidates.Any())
+            {
+                log.LogInformation($"Strategy: email match against {unmappedCandidates.Count} unmapped booking(s) for ownerEmail = '{assigneeEmail}'");
+
+                var emailMatches = unmappedCandidates
                     .Where(c => string.Equals(c.OwnerEmail, assigneeEmail, StringComparison.OrdinalIgnoreCase))
                     .ToList();
 
-                log.LogInformation($"Email match result: {emailMatches.Count} match(es) found");
+                log.LogInformation($"Email match result (unmapped only): {emailMatches.Count} match(es) found");
 
                 if (emailMatches.Count == 1)
                 {
-                    log.LogInformation($"ResolveBookingByTechnicianAndDate → EXACT EMAIL MATCH → booking {emailMatches[0].Id} (start: {emailMatches[0].Start?.ToString("o") ?? "null"})");
+                    log.LogInformation($"ResolveBookingByTechnicianAndDate → EXACT EMAIL MATCH (unmapped) → booking {emailMatches[0].Id} (start: {emailMatches[0].Start?.ToString("o") ?? "null"})");
                     return emailMatches[0].Id;
                 }
 
                 if (emailMatches.Count > 1)
                 {
-                    // Multiple bookings with the same technician — pick closest starttime among them
                     var selected = emailMatches
                         .OrderBy(c => c.Start.HasValue
                             ? Math.Abs((c.Start.Value - firedAt).TotalMinutes)
                             : double.MaxValue)
                         .First();
 
-                    log.LogInformation($"ResolveBookingByTechnicianAndDate → EMAIL MATCH (multiple, picked closest) → booking {selected.Id} (start: {selected.Start?.ToString("o") ?? "null"})");
+                    log.LogInformation($"ResolveBookingByTechnicianAndDate → EMAIL MATCH (multiple unmapped, picked closest) → booking {selected.Id} (start: {selected.Start?.ToString("o") ?? "null"})");
                     return selected.Id;
                 }
 
-                log.LogWarning($"ResolveBookingByTechnicianAndDate → NO EMAIL MATCH for '{assigneeEmail}' — falling back to unmapped-first + closest starttime");
+                log.LogWarning($"ResolveBookingByTechnicianAndDate → NO EMAIL MATCH among unmapped bookings for '{assigneeEmail}' — falling back to closest starttime among unmapped");
             }
-            else
+            else if (string.IsNullOrEmpty(assigneeEmail))
             {
                 log.LogWarning("ResolveBookingByTechnicianAndDate — assigneeEmail is empty, skipping email match, using fallback");
             }
 
-            // 2. Fallback: prefer unmapped bookings, then closest starttime
-            var unmapped = candidates.Where(c => string.IsNullOrWhiteSpace(c.WorkflowId)).ToList();
-            log.LogInformation($"Fallback strategy — unmapped bookings: {unmapped.Count} of {candidates.Count}");
+            // 2. Fallback: prefer unmapped bookings by closest starttime.
+            //    If all bookings are already mapped (second workflow scenario), fall back to all candidates.
+            var pool = allMapped ? candidates : unmappedCandidates;
 
-            var pool = unmapped.Any() ? unmapped : candidates;
-
-            if (!unmapped.Any())
-                log.LogWarning("All bookings already mapped — second workflow scenario, falling back to all candidates");
+            if (allMapped)
+                log.LogWarning("All bookings already mapped — second workflow scenario, picking by closest starttime across all");
+            else
+                log.LogInformation($"Fallback: picking by closest starttime among {pool.Count} unmapped booking(s)");
 
             var fallbackSelected = pool
                 .OrderBy(c =>
