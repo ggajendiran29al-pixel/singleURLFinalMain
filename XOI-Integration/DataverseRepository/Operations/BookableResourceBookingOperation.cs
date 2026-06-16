@@ -815,13 +815,15 @@ namespace XOI_Integration.DataverseRepository.Operations
 
                 if (allEmailMatches.Count > 1)
                 {
+                    // Among multiple mapped bookings for the same technician, prefer the most recently
+                    // scheduled one — it is the booking they are actively working on.
+                    // "Closest to firedAt" is wrong here because an older past booking can beat a
+                    // future booking simply due to calendar distance.
                     var selected = allEmailMatches
-                        .OrderBy(c => c.Start.HasValue
-                            ? Math.Abs((c.Start.Value - firedAt).TotalMinutes)
-                            : double.MaxValue)
+                        .OrderByDescending(c => c.Start ?? DateTime.MinValue)
                         .First();
 
-                    log.LogInformation($"ResolveBookingByTechnicianAndDate → EMAIL MATCH (multiple all candidates, picked closest) → booking {selected.Id} (start: {selected.Start?.ToString("o") ?? "null"})");
+                    log.LogInformation($"ResolveBookingByTechnicianAndDate → EMAIL MATCH (multiple all candidates, picked latest starttime) → booking {selected.Id} (start: {selected.Start?.ToString("o") ?? "null"})");
                     return selected.Id;
                 }
 
