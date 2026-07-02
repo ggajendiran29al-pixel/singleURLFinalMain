@@ -22,7 +22,7 @@ namespace XOI_Integration.DataFactory.InheritedObjects
             CustomerName = CustomerName = customerInfo.Name;
             JobLocation = await operation.ProjectGetJobLocationAsync(customerInfo);
             OrderNumber = $"PR-{await operation.ProjectGetProjectNumberAsync()}";
-            Label = OrderNumber;
+            Label = $"{CustomerName}\n{OrderNumber}\n{JobLocation.Replace("\r\n", "").Replace("\r\n", "").Trim()}";
             Tags = Array.Empty<string>();
             TagSuggestions = Array.Empty<string>();
             InternalNote = string.IsNullOrEmpty(await operation.ProjectGetInternalNoteAsync())
