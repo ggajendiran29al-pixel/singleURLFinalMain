@@ -205,7 +205,7 @@ namespace XOI_Integration
             XOiJobInfo jobInfo,
             string jobId)
         {
-            if (jobInfo?.WorkSummary?.CustomerAssetId == Guid.Empty)
+            if (jobInfo?.WorkSummary == null || jobInfo.WorkSummary.CustomerAssetId == Guid.Empty)
             {
                 log.LogInformation("No asset available for association retry.");
                 return;

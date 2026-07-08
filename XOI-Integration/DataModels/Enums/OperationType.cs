@@ -13,6 +13,7 @@ namespace XOI_Integration.DataModels.Enums
         GetJobSummary, 
         GetJob,
         CreateAsset,
-        UpdateAsset
+        UpdateAsset,
+        WorkflowExcluded
     }
 }
