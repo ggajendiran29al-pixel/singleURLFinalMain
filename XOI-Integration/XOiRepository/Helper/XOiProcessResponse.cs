@@ -3,7 +3,9 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using XOI_Integration.DataModels.Enums;
+using XOI_Integration.DataverseRepository.Operations;
 using XOI_Integration.XOiRepository.XOiDataModels;
 
 namespace XOI_Integration.XOiRepository.Helper
@@ -136,7 +138,7 @@ namespace XOI_Integration.XOiRepository.Helper
         // ---------------------------------------------------------
         // BUILD CUSTOMER ASSET DATA
         // ---------------------------------------------------------
-        public static List<XOiToCustomerAssetData> BuildXOiToCustomerAssetData(
+        public static async Task<List<XOiToCustomerAssetData>> BuildXOiToCustomerAssetData(
             ILogger log,
             GraphQLResponse<XOiJobSummaryResponse> response)
         {
@@ -150,6 +152,14 @@ namespace XOI_Integration.XOiRepository.Helper
 
                 foreach (var doc in summary.Documentation)
                 {
+                    if (IsWorkflowExcludedFromSync(doc.WorkflowName))
+                    {
+                        var message = $"Workflow '{doc.WorkflowName}' excluded from FS asset sync per ExcludedWorkflowNames configuration.";
+                        log.LogInformation(message);
+                        await IntegrationLogOperation.CreateAssetsLogAsync(summary.JobId, JobResponseResult.Success, OperationType.WorkflowExcluded, message);
+                        continue;
+                    }
+
                     list.Add(new XOiToCustomerAssetData
                     {
                         Make = doc.DerivedData?.Make,
@@ -170,7 +180,7 @@ namespace XOI_Integration.XOiRepository.Helper
         // ---------------------------------------------------------
         // BUILD WORK SUMMARY NOTE
         // ---------------------------------------------------------
-        public static XOiWorkSummaryToBookableResourceData BuildXOiWorkSummaryToBookableResourceData(
+        public static async Task<XOiWorkSummaryToBookableResourceData> BuildXOiWorkSummaryToBookableResourceData(
             ILogger log,
             GraphQLResponse<XOiJobSummaryResponse> response,
             string workflowJobId)
@@ -183,6 +193,15 @@ namespace XOI_Integration.XOiRepository.Helper
 
                 var doc = summary.Documentation.FirstOrDefault();
                 var assignee = summary.Assignees?.FirstOrDefault();
+
+                if (doc != null && IsWorkflowExcludedFromSync(doc.WorkflowName))
+                {
+                    var message = $"Workflow '{doc.WorkflowName}' excluded from FS booking note sync per ExcludedWorkflowNames configuration.";
+                    log.LogInformation(message);
+                    await IntegrationLogOperation.CreateAssetsLogAsync(summary.JobId, JobResponseResult.Success, OperationType.WorkflowExcluded, message);
+                    log.LogInformation("Finish building XOi Work Summary data into a bookable resource data - no eligible workflows to sync");
+                    return null;
+                }
 
                 return new XOiWorkSummaryToBookableResourceData
                 {
@@ -199,6 +218,16 @@ namespace XOI_Integration.XOiRepository.Helper
             {
                 return null;
             }
+        }
+
+        private static bool IsWorkflowExcludedFromSync(string workflowName)
+        {
+            var excludedWorkflowNames = Environment.GetEnvironmentVariable("ExcludedWorkflowNames", EnvironmentVariableTarget.Process)
+                ?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(name => name.Trim())
+                ?? Enumerable.Empty<string>();
+
+            return excludedWorkflowNames.Any(excluded => string.Equals(excluded, workflowName, StringComparison.OrdinalIgnoreCase));
         }
     }
 }

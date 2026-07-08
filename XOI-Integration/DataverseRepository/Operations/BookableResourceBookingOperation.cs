@@ -236,6 +236,12 @@ namespace XOI_Integration.DataverseRepository.Operations
     string jobId,
     Guid bookingId)
         {
+            if (summary == null)
+            {
+                log.LogInformation("No eligible workflow summary to sync - skipping booking note creation");
+                return;
+            }
+
             log.LogInformation("Start creating notes (workflow-specific)");
 
             Guid currentBookingId = bookingId;
