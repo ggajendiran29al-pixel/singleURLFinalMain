@@ -125,41 +125,73 @@ using static Grpc.Core.Metadata;
                     "address1_country"
                 );
 
-                return await GetFormattedAddressAsync(query);
-            }
+            //return await GetFormattedAddressAsync(query);
+            string address = await GetFormattedAddressAsync(query);
 
-            private async Task<string> GetFormattedAddressAsync(QueryExpression query)
+            return address;
+        }
+
+        //private async Task<string> GetFormattedAddressAsync(QueryExpression query)
+        //{
+        //    var response = await DataverseApi.Instance.RetrieveMultipleAsync(query);
+
+        //    foreach (var entity in response.Entities)
+        //    {
+        //        StringBuilder sb = new StringBuilder();
+
+        //        string line1 = GetAliasedValue(entity, "account1.address1_line1");
+        //        if (!string.IsNullOrEmpty(line1)) sb.AppendLine(line1);
+
+        //        string line2 = GetAliasedValue(entity, "account1.address1_line2");
+        //        if (!string.IsNullOrWhiteSpace(line2)) sb.AppendLine(line2);
+
+        //        string line3 = GetAliasedValue(entity, "account1.address1_line3");
+        //        if (!string.IsNullOrWhiteSpace(line3)) sb.AppendLine(line3);
+
+        //        string city = GetAliasedValue(entity, "account1.address1_city");
+        //        string state = GetAliasedValue(entity, "account1.address1_stateorprovince");
+        //        string postal = GetAliasedValue(entity, "account1.address1_postalcode");
+        //        string country = GetAliasedValue(entity, "account1.address1_country");
+
+        //        sb.AppendLine($"{city} {state} {postal}".Trim());
+        //        sb.Append(country);
+
+        //        return sb.ToString();
+        //    }
+
+        //    return null;
+        //}
+        private async Task<string> GetFormattedAddressAsync(QueryExpression query)
+        {
+            var response = await DataverseApi.Instance.RetrieveMultipleAsync(query);
+
+            string address = string.Empty;
+
+            foreach (var entity in response.Entities)
             {
-                var response = await DataverseApi.Instance.RetrieveMultipleAsync(query);
+                StringBuilder sb = new StringBuilder();
 
-                foreach (var entity in response.Entities)
-                {
-                    StringBuilder sb = new StringBuilder();
+                string line1 = GetAliasedValue(entity, "account1.address1_line1");
+                if (!string.IsNullOrEmpty(line1)) sb.AppendLine(line1);
+                string line2 = GetAliasedValue(entity, "account1.address1_line2");
+                if (!string.IsNullOrWhiteSpace(line2)) sb.AppendLine(line2);
+                string line3 = GetAliasedValue(entity, "account1.address1_line3");
+                if (!string.IsNullOrWhiteSpace(line3)) sb.AppendLine(line3);
 
-                    string line1 = GetAliasedValue(entity, "account1.address1_line1");
-                    if (!string.IsNullOrEmpty(line1)) sb.AppendLine(line1);
+                string city = GetAliasedValue(entity, "account1.address1_city");
+                string state = GetAliasedValue(entity, "account1.address1_stateorprovince");
+                string postal = GetAliasedValue(entity, "account1.address1_postalcode");
+                string country = GetAliasedValue(entity, "account1.address1_country");
 
-                    string line2 = GetAliasedValue(entity, "account1.address1_line2");
-                    if (!string.IsNullOrWhiteSpace(line2)) sb.AppendLine(line2);
+                sb.AppendLine($"{city} {state} {postal}".Trim());
+                sb.Append(country);
 
-                    string line3 = GetAliasedValue(entity, "account1.address1_line3");
-                    if (!string.IsNullOrWhiteSpace(line3)) sb.AppendLine(line3);
-
-                    string city = GetAliasedValue(entity, "account1.address1_city");
-                    string state = GetAliasedValue(entity, "account1.address1_stateorprovince");
-                    string postal = GetAliasedValue(entity, "account1.address1_postalcode");
-                    string country = GetAliasedValue(entity, "account1.address1_country");
-
-                    sb.AppendLine($"{city} {state} {postal}".Trim());
-                    sb.Append(country);
-
-                    return sb.ToString();
-                }
-
-                return null;
+                address = sb.ToString();
             }
 
-            private string GetAliasedValue(Entity entity, string alias)
+            return address;
+        }
+        private string GetAliasedValue(Entity entity, string alias)
             {
                 if (entity.Attributes.TryGetValue(alias, out var obj) &&
                     obj is AliasedValue av &&
