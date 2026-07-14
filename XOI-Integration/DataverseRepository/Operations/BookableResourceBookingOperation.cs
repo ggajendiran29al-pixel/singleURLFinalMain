@@ -409,6 +409,11 @@ namespace XOI_Integration.DataverseRepository.Operations
     Guid currentBookingId,
     Guid sourceBookingId)
         {
+            // Self-write loop guard: copying a booking's own values back onto itself
+            // still fires the "Booking Update" plugin, which re-queues this function forever.
+            if (currentBookingId == sourceBookingId)
+                return;
+
             QueryExpression query = new QueryExpression("bookableresourcebooking")
             {
                 ColumnSet = new ColumnSet(
@@ -433,30 +438,48 @@ namespace XOI_Integration.DataverseRepository.Operations
             var source = response.Entities.FirstOrDefault();
             if (source == null) return;
 
-            Entity update = new Entity("bookableresourcebooking", currentBookingId)
-            {
-                ["sisps_xoi_vision_jobid"] =
-                    source.GetAttributeValue<string>("sisps_xoi_vision_jobid"),
-
-                ["sisps_xoi_vision_jobshareurl"] =
-                    source.GetAttributeValue<string>("sisps_xoi_vision_jobshareurl"),
-
-                ["sisps_xoi_vision_webjoburl"] =
-                    source.GetAttributeValue<string>("sisps_xoi_vision_webjoburl")
-            };
+            string newJobId = source.GetAttributeValue<string>("sisps_xoi_vision_jobid");
+            string newShareUrl = source.GetAttributeValue<string>("sisps_xoi_vision_jobshareurl");
+            string newWebJobUrl = source.GetAttributeValue<string>("sisps_xoi_vision_webjoburl");
 
             //  Replace ONLY owner email in job URL
-            string sourceJobUrl =
-                source.GetAttributeValue<string>("sisps_xoi_vision_joburl");
+            string sourceJobUrl = source.GetAttributeValue<string>("sisps_xoi_vision_joburl");
+            string newJobUrl = !string.IsNullOrWhiteSpace(sourceJobUrl)
+                ? ReplaceOwnerInVisionJobUrl(sourceJobUrl, currentBookingId)
+                : null;
 
-            if (!string.IsNullOrWhiteSpace(sourceJobUrl))
+            // No-op guard: Dataverse fires plugins on Update even when values are unchanged,
+            // so skip the write entirely when the booking already carries these exact values.
+            var current = await Task.Run(() =>
+                DataverseApi.Instance.Retrieve(
+                    "bookableresourcebooking",
+                    currentBookingId,
+                    new ColumnSet(
+                        "sisps_xoi_vision_jobid",
+                        "sisps_xoi_vision_jobshareurl",
+                        "sisps_xoi_vision_webjoburl",
+                        "sisps_xoi_vision_joburl"
+                    )));
+
+            bool unchanged =
+                string.Equals(current.GetAttributeValue<string>("sisps_xoi_vision_jobid"), newJobId, StringComparison.Ordinal) &&
+                string.Equals(current.GetAttributeValue<string>("sisps_xoi_vision_jobshareurl"), newShareUrl, StringComparison.Ordinal) &&
+                string.Equals(current.GetAttributeValue<string>("sisps_xoi_vision_webjoburl"), newWebJobUrl, StringComparison.Ordinal) &&
+                (newJobUrl == null || string.Equals(current.GetAttributeValue<string>("sisps_xoi_vision_joburl"), newJobUrl, StringComparison.Ordinal));
+
+            if (unchanged)
+                return;
+
+            Entity update = new Entity("bookableresourcebooking", currentBookingId)
             {
-                string updatedJobUrl =
-                     ReplaceOwnerInVisionJobUrl(
-                        sourceJobUrl,
-                        currentBookingId);
+                ["sisps_xoi_vision_jobid"] = newJobId,
+                ["sisps_xoi_vision_jobshareurl"] = newShareUrl,
+                ["sisps_xoi_vision_webjoburl"] = newWebJobUrl
+            };
 
-                update["sisps_xoi_vision_joburl"] = updatedJobUrl;
+            if (newJobUrl != null)
+            {
+                update["sisps_xoi_vision_joburl"] = newJobUrl;
             }
 
             await DataverseApi.Instance.UpdateAsync(update);
