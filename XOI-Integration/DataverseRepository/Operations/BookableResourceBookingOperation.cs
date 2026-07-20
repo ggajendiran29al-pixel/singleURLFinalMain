@@ -262,12 +262,38 @@ namespace XOI_Integration.DataverseRepository.Operations
                               + Environment.NewLine
                               + shareLink;
 
-            // Hash-based duplicate check using acl_xoisummaryhash field
+            // Create-or-update per workflow: one note per workflow per booking.
+            // Exact same text → skip; same workflow with changed text (technician edited
+            // the summary in XOi) → update that note in place; otherwise create.
+            // Append-only + exact-hash dedup produced duplicates whenever the summary
+            // evolved or two webhook retries raced — update-in-place removes both modes.
             string hash = ComputeHash(noteText);
             var existingNotes = await GetNotesForBookingAsync(currentBookingId);
-            if (existingNotes.Any(n => n.Hash == hash))
+
+            if (existingNotes.Any(n =>
+                    string.Equals(n.Hash, hash, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(n.Note, noteText, StringComparison.Ordinal)))
             {
                 log.LogInformation($"Duplicate note detected via hash for booking {currentBookingId} — skipped.");
+                return;
+            }
+
+            string workflowPrefix = $"[{summary.WorkflowName}]";
+            var workflowNote = existingNotes.FirstOrDefault(n =>
+                !string.IsNullOrEmpty(n.Note) &&
+                n.Note.StartsWith(workflowPrefix, StringComparison.OrdinalIgnoreCase));
+
+            if (workflowNote != null)
+            {
+                Entity updateNote = new Entity("msdyn_bookableresourcebookingquicknote", workflowNote.NoteId)
+                {
+                    ["msdyn_text"] = noteText,
+                    ["acl_xoisummaryhash"] = hash
+                };
+
+                await DataverseApi.Instance.UpdateAsync(updateNote);
+
+                log.LogInformation($"Existing note {workflowNote.NoteId} for workflow '{summary.WorkflowName}' updated in place for booking {currentBookingId}");
                 return;
             }
 
