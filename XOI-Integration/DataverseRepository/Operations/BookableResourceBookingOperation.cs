@@ -511,6 +511,29 @@ namespace XOI_Integration.DataverseRepository.Operations
             await DataverseApi.Instance.UpdateAsync(update);
         }
 
+        // =========================================================
+        // XOI JOB OWNER (acl_xoijobowner)
+        // =========================================================
+        // Returns the nominated owner's email, or null when the field is empty so the
+        // caller can fall back to the booking's own technician. A resource with no
+        // systemuser mapped also returns null rather than an empty owner.
+        private static string GetXOiJobOwnerEmail(Guid bookingId)
+        {
+            var booking = DataverseApi.Instance.Retrieve(
+                "bookableresourcebooking",
+                bookingId,
+                new ColumnSet("acl_xoijobowner")
+            );
+
+            var ownerRef = booking.GetAttributeValue<EntityReference>("acl_xoijobowner");
+            if (ownerRef == null)
+                return null;
+
+            string email = GetTechnicianInfoFromResource(ownerRef.Id).Email;
+
+            return string.IsNullOrWhiteSpace(email) ? null : email;
+        }
+
         //Replace ONLY the owner in payload
         private static string ReplaceOwnerInVisionJobUrl(
      string jobUrl,
@@ -535,7 +558,12 @@ namespace XOI_Integration.DataverseRepository.Operations
             JObject payload = JObject.Parse(jsonPayload);
 
             //to be removed Commented 22012026//string email = GetTechnicianEmailFromBooking(bookingId);
-            string email = GetTechnicianInfoFromBooking(bookingId).Email;
+            // XOi Job Owner override: only the owner can close the job in XOi, so when the
+            // dispatcher nominates a technician on acl_xoijobowner that resource owns the
+            // job. Empty field falls back to the booking's own technician — the original
+            // behaviour, where the first assigned technician stays the owner.
+            string email = GetXOiJobOwnerEmail(bookingId)
+                           ?? GetTechnicianInfoFromBooking(bookingId).Email;
 
             if (string.IsNullOrWhiteSpace(email))
                 return jobUrl;
@@ -640,10 +668,18 @@ namespace XOI_Integration.DataverseRepository.Operations
             var resourceRef = booking.GetAttributeValue<EntityReference>("resource");
             if (resourceRef == null) return new TechnicianInfo();
 
+            return GetTechnicianInfoFromResource(resourceRef.Id);
+        }
+
+        // Resolve technician details straight from a bookableresource — shared by the
+        // booking-based lookup above and by the acl_xoijobowner override, which already
+        // holds a bookableresource reference and has no booking to walk from.
+        private static TechnicianInfo GetTechnicianInfoFromResource(Guid resourceId)
+        {
             // Resource -> name + userid
             var resource = DataverseApi.Instance.Retrieve(
                 "bookableresource",
-                resourceRef.Id,
+                resourceId,
                 new ColumnSet("name", "userid")
             );
 
