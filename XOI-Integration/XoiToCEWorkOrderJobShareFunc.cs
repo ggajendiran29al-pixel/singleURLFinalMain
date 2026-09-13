@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using XOI_Integration.DataFactory;
 using XOI_Integration.DataFactory.BaseObject;
+using XOI_Integration.DataModels.Enums;
 using XOI_Integration.DataFactory.InheritedObjects.OperationsForInheritedObjects;
 using XOI_Integration.DataverseRepository;
 using XOI_Integration.DataverseRepository.Operations;
@@ -70,7 +71,7 @@ namespace XOI_Integration
                             allEmails.Add(techEmail);
                     }
 
-                    jobData.AssigneeIds = string.Join(",", allEmails);
+                    jobData.AssigneeIds = allEmails.ToList();
 
                     var xoiOp = new XOiOperation(log);
 
@@ -89,13 +90,21 @@ namespace XOI_Integration
 
                     if (xoiEmails.Count > 0 && xoiEmails.SetEquals(allEmails))
                     {
-                        log.LogInformation($"XOi job {existingJobId} already carries assignees [{jobData.AssigneeIds}] — skipping updateJob");
+                        log.LogInformation($"XOi job {existingJobId} already carries assignees [{string.Join(", ", jobData.AssigneeIds)}] — skipping updateJob");
                         return;
                     }
 
-                    log.LogInformation($"Updating XOi job {existingJobId} with merged assignees: {jobData.AssigneeIds}");
+                    log.LogInformation($"Updating XOi job {existingJobId} with merged assignees: {string.Join(", ", jobData.AssigneeIds)}");
 
-                    await xoiOp.UpdateJobAsync(jobData, existingJobId);
+                    var updateResult = await xoiOp.UpdateJobAsync(jobData, existingJobId);
+
+                    // A rejected mutation used to be discarded here, so a failed assignee
+                    // push logged the same success line as a working one.
+                    if (updateResult?.jobResponseResult != JobResponseResult.Success)
+                    {
+                        log.LogError($"XOi updateJob failed for job {existingJobId} — assignees not applied: {updateResult?.Message ?? "no response"}");
+                        return;
+                    }
 
                     log.LogInformation("✔ Copied job details and updated XOi assignees for secondary booking");
                     return;
