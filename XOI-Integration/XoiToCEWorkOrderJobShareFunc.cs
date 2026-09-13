@@ -61,25 +61,31 @@ namespace XOI_Integration
                         firstBookingId
                     );
 
-                    // Merge all technician emails and update XOi assignees
-                    var allBookingIds = await BookableResourceBookingOperation.GetBookableResourceBookingIdsAsync(existingJobId);
-                    var allEmails = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var bId in allBookingIds)
+                    // XOi supports a single assignee per job — "Currently only one Assignee
+                    // ID is supported" — and that assignee is the job owner, the only one
+                    // who can close the job. So push the nominated owner alone rather than
+                    // every technician on the work order; the others keep access through
+                    // the Vision deep link and can still complete workflows.
+                    string ownerEmail =
+                        await BookableResourceBookingOperation.GetXOiJobOwnerEmailForJobAsync(log, existingJobId)
+                        ?? await BookableResourceBookingOperation.GetTechnicianEmailFromBookingAsync(firstBookingId);
+
+                    if (string.IsNullOrEmpty(ownerEmail))
                     {
-                        var techEmail = await BookableResourceBookingOperation.GetTechnicianEmailFromBookingAsync(bId);
-                        if (!string.IsNullOrEmpty(techEmail))
-                            allEmails.Add(techEmail);
+                        log.LogWarning($"No XOi job owner could be resolved for job {existingJobId} — skipping updateJob");
+                        return;
                     }
 
+                    var allEmails = new HashSet<string>(new[] { ownerEmail }, StringComparer.OrdinalIgnoreCase);
                     jobData.AssigneeIds = allEmails.ToList();
 
                     var xoiOp = new XOiOperation(log);
 
-                    // Skip the XOi mutation when the assignee set already matches what XOi
-                    // holds. The Booking Update plugin re-fires on the writes made just
-                    // above, so without this every re-trigger sent a redundant updateJob.
-                    // Splitting on commas keeps the comparison correct while AssigneeIds is
-                    // still sent as a joined string rather than an array.
+                    // Skip the XOi mutation when the assignee already matches what XOi holds.
+                    // The Booking Update plugin fires on all attributes and re-fires on the
+                    // writes made just above, so without this every re-trigger sent another
+                    // updateJob. Splitting on commas normalises any legacy value left by the
+                    // earlier joined-string payload so those compare correctly too.
                     var currentJob = await xoiOp.GetJobAsync(existingJobId);
                     var xoiEmails = new HashSet<string>(
                         (currentJob?.AssigneeIds ?? new List<string>())
@@ -90,11 +96,11 @@ namespace XOI_Integration
 
                     if (xoiEmails.Count > 0 && xoiEmails.SetEquals(allEmails))
                     {
-                        log.LogInformation($"XOi job {existingJobId} already carries assignees [{string.Join(", ", jobData.AssigneeIds)}] — skipping updateJob");
+                        log.LogInformation($"XOi job {existingJobId} already owned by {ownerEmail} — skipping updateJob");
                         return;
                     }
 
-                    log.LogInformation($"Updating XOi job {existingJobId} with merged assignees: {string.Join(", ", jobData.AssigneeIds)}");
+                    log.LogInformation($"Setting XOi job {existingJobId} owner to {ownerEmail}");
 
                     var updateResult = await xoiOp.UpdateJobAsync(jobData, existingJobId);
 
@@ -106,7 +112,7 @@ namespace XOI_Integration
                         return;
                     }
 
-                    log.LogInformation("✔ Copied job details and updated XOi assignees for secondary booking");
+                    log.LogInformation("✔ Copied job details and set XOi job owner for secondary booking");
                     return;
                 }
 

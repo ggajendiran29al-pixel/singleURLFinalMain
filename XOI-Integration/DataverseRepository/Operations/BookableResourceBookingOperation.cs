@@ -534,6 +534,55 @@ namespace XOI_Integration.DataverseRepository.Operations
             return string.IsNullOrWhiteSpace(email) ? null : email;
         }
 
+        // Job-wide owner resolution. XOi accepts a single assignee per job and that
+        // assignee is the owner, so the nomination has to be read across every booking
+        // on the job: the plugin fires for whichever booking was edited, and resolving
+        // only that booking would let an unrelated edit push its own technician and
+        // overwrite a nomination made elsewhere. Most recent nomination wins.
+        public static async Task<string> GetXOiJobOwnerEmailForJobAsync(ILogger log, string jobId)
+        {
+            QueryExpression query = new QueryExpression("bookableresourcebooking")
+            {
+                ColumnSet = new ColumnSet("acl_xoijobowner"),
+                Criteria = new FilterExpression
+                {
+                    Conditions =
+                    {
+                        new ConditionExpression("sisps_xoi_vision_jobid", ConditionOperator.Equal, jobId),
+                        new ConditionExpression("acl_xoijobowner", ConditionOperator.NotNull)
+                    }
+                }
+            };
+            query.AddOrder("modifiedon", OrderType.Descending);
+
+            var response = await DataverseApi.Instance.RetrieveMultipleAsync(query);
+
+            var nominations = response.Entities
+                .Select(e => e.GetAttributeValue<EntityReference>("acl_xoijobowner"))
+                .Where(r => r != null)
+                .ToList();
+
+            if (nominations.Count == 0)
+                return null;
+
+            if (nominations.Select(r => r.Id).Distinct().Count() > 1)
+            {
+                log.LogWarning(
+                    $"Job {jobId} has conflicting XOi Job Owner nominations across bookings — using the most recently modified one.");
+            }
+
+            string email = GetTechnicianInfoFromResource(nominations.First().Id).Email;
+
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                log.LogWarning(
+                    $"Nominated XOi Job Owner for job {jobId} has no mapped user email — falling back to the first technician.");
+                return null;
+            }
+
+            return email;
+        }
+
         //Replace ONLY the owner in payload
         private static string ReplaceOwnerInVisionJobUrl(
      string jobUrl,
