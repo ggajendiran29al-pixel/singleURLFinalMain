@@ -71,9 +71,30 @@ namespace XOI_Integration
                     }
 
                     jobData.AssigneeIds = string.Join(",", allEmails);
-                    log.LogInformation($"Updating XOi job {existingJobId} with merged assignees: {jobData.AssigneeIds}");
 
                     var xoiOp = new XOiOperation(log);
+
+                    // Skip the XOi mutation when the assignee set already matches what XOi
+                    // holds. The Booking Update plugin re-fires on the writes made just
+                    // above, so without this every re-trigger sent a redundant updateJob.
+                    // Splitting on commas keeps the comparison correct while AssigneeIds is
+                    // still sent as a joined string rather than an array.
+                    var currentJob = await xoiOp.GetJobAsync(existingJobId);
+                    var xoiEmails = new HashSet<string>(
+                        (currentJob?.AssigneeIds ?? new List<string>())
+                            .SelectMany(id => (id ?? string.Empty).Split(','))
+                            .Select(id => id.Trim())
+                            .Where(id => !string.IsNullOrEmpty(id)),
+                        StringComparer.OrdinalIgnoreCase);
+
+                    if (xoiEmails.Count > 0 && xoiEmails.SetEquals(allEmails))
+                    {
+                        log.LogInformation($"XOi job {existingJobId} already carries assignees [{jobData.AssigneeIds}] — skipping updateJob");
+                        return;
+                    }
+
+                    log.LogInformation($"Updating XOi job {existingJobId} with merged assignees: {jobData.AssigneeIds}");
+
                     await xoiOp.UpdateJobAsync(jobData, existingJobId);
 
                     log.LogInformation("✔ Copied job details and updated XOi assignees for secondary booking");
