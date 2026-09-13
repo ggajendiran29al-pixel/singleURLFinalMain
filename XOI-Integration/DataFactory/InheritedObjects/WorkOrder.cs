@@ -16,7 +16,7 @@ namespace XOI_Integration.DataFactory.InheritedObjects
             WorkOrderOperation operation = new WorkOrderOperation(BookableResourceBookingId);
             WorkOrderId = await operation.GetWorkOrderIdAsync();
 
-            AssigneeIds = string.Join(",", await GetResourcesAsync());
+            AssigneeIds = await GetResourcesAsync();
             CustomerName = await operation.WorkOrderGetCustomerInfoAsync();
             JobLocation = await operation.WorkOrderGetJobLocationAsync();
             OrderNumber = $"WO-{await operation.WorkOrderGetProjectNumberAsync()}";

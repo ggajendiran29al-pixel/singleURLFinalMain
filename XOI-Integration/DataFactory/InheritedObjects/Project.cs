@@ -18,7 +18,7 @@ namespace XOI_Integration.DataFactory.InheritedObjects
             CustomerInfo customerInfo = await operation.ProjectGetCustomerInfoAsync();
 
             ProjectId = await operation.GetProjectIdAsync();
-            AssigneeIds = string.Join(",", await GetResourcesAsync());
+            AssigneeIds = await GetResourcesAsync();
             CustomerName = CustomerName = customerInfo.Name;
             JobLocation = await operation.ProjectGetJobLocationAsync(customerInfo);
             OrderNumber = $"PR-{await operation.ProjectGetProjectNumberAsync()}";
