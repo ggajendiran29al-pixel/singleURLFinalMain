@@ -517,7 +517,11 @@ namespace XOI_Integration.DataverseRepository.Operations
         // Returns the nominated owner's email, or null when the field is empty so the
         // caller can fall back to the booking's own technician. A resource with no
         // systemuser mapped also returns null rather than an empty owner.
-        private static string GetXOiJobOwnerEmail(Guid bookingId)
+        //
+        // The plugin fires for whichever booking was edited, so a nomination found here
+        // is the freshest statement of intent — it is read before the job-wide lookup
+        // below, which avoids having to guess which of several nominations is newest.
+        public static string GetXOiJobOwnerEmail(Guid bookingId)
         {
             var booking = DataverseApi.Instance.Retrieve(
                 "bookableresourcebooking",
@@ -534,11 +538,15 @@ namespace XOI_Integration.DataverseRepository.Operations
             return string.IsNullOrWhiteSpace(email) ? null : email;
         }
 
-        // Job-wide owner resolution. XOi accepts a single assignee per job and that
-        // assignee is the owner, so the nomination has to be read across every booking
-        // on the job: the plugin fires for whichever booking was edited, and resolving
-        // only that booking would let an unrelated edit push its own technician and
-        // overwrite a nomination made elsewhere. Most recent nomination wins.
+        // Job-wide owner resolution — the fallback used when the edited booking carries
+        // no nomination of its own. A nomination made on one booking has to survive edits
+        // to the others, so an unrelated change cannot push that booking's own technician
+        // and silently revoke the nomination. This includes resource swaps: a nomination
+        // is explicit and is not withdrawn when a booking's technician changes.
+        //
+        // Ordering here is only a deterministic pick among several standing nominations;
+        // it is not "newest intent" — modifiedon is bumped by this integration's own
+        // writes. The edited booking answering first is what makes intent unambiguous.
         public static async Task<string> GetXOiJobOwnerEmailForJobAsync(ILogger log, string jobId)
         {
             QueryExpression query = new QueryExpression("bookableresourcebooking")
@@ -773,6 +781,12 @@ namespace XOI_Integration.DataverseRepository.Operations
                           {
                               new ConditionExpression("sisps_xoi_vision_jobid", ConditionOperator.Equal, jobId)
                           }
+                      },
+                      // Unordered, this returned a different "first booking" run to run,
+                      // which made the no-nomination fallback nondeterministic.
+                      Orders =
+                      {
+                          new OrderExpression("createdon", OrderType.Ascending)
                       }
                   };
 
