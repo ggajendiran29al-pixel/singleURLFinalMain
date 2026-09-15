@@ -66,8 +66,14 @@ namespace XOI_Integration
                     // who can close the job. So push the nominated owner alone rather than
                     // every technician on the work order; the others keep access through
                     // the Vision deep link and can still complete workflows.
+                    // The edited booking's own nomination wins: the plugin fires for the
+                    // booking the dispatcher just touched, so that value is the freshest
+                    // intent and needs no timestamp comparison. Falling back to a
+                    // nomination held on another booking keeps it alive through unrelated
+                    // edits — a resource swap does not revoke an explicit nomination.
                     string ownerEmail =
-                        await BookableResourceBookingOperation.GetXOiJobOwnerEmailForJobAsync(log, existingJobId)
+                        BookableResourceBookingOperation.GetXOiJobOwnerEmail(bookingId)
+                        ?? await BookableResourceBookingOperation.GetXOiJobOwnerEmailForJobAsync(log, existingJobId)
                         ?? await BookableResourceBookingOperation.GetTechnicianEmailFromBookingAsync(firstBookingId);
 
                     if (string.IsNullOrEmpty(ownerEmail))
