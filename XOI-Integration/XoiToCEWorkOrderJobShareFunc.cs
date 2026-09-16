@@ -24,7 +24,9 @@ namespace XOI_Integration
             string message,
             ILogger log)
         {
-            log.LogWarning("XoiToCEWorkOrderJobShare triggered.");
+            // Build marker: three rounds of diagnosis were spent unable to tell which
+            // build was live. If this line is absent from the log, the deployment is old.
+            log.LogWarning("XoiToCEWorkOrderJobShare triggered. [build: job-owner-resolution-v2]");
             DataverseApi.Initialize(Environment.GetEnvironmentVariable("DataverseConnectionString"));
 
             Guid bookingId = DeserializeJSON.GetBookableResourceBookingId(message);
@@ -71,10 +73,24 @@ namespace XOI_Integration
                     // intent and needs no timestamp comparison. Falling back to a
                     // nomination held on another booking keeps it alive through unrelated
                     // edits — a resource swap does not revoke an explicit nomination.
+                    string bookingNomination =
+                        BookableResourceBookingOperation.GetXOiJobOwnerEmail(bookingId, log);
+
+                    string jobNomination = bookingNomination == null
+                        ? await BookableResourceBookingOperation.GetXOiJobOwnerEmailForJobAsync(log, existingJobId)
+                        : null;
+
                     string ownerEmail =
-                        BookableResourceBookingOperation.GetXOiJobOwnerEmail(bookingId)
-                        ?? await BookableResourceBookingOperation.GetXOiJobOwnerEmailForJobAsync(log, existingJobId)
+                        bookingNomination
+                        ?? jobNomination
                         ?? await BookableResourceBookingOperation.GetTechnicianEmailFromBookingAsync(firstBookingId);
+
+                    string ownerSource =
+                        bookingNomination != null ? $"nomination on edited booking {bookingId}"
+                        : jobNomination != null ? "nomination on another booking of this job"
+                        : $"fallback to first booking {firstBookingId} technician";
+
+                    log.LogInformation($"XOi job owner resolved to {ownerEmail ?? "nothing"} via {ownerSource}.");
 
                     if (string.IsNullOrEmpty(ownerEmail))
                     {
