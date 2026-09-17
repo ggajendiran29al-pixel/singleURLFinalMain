@@ -521,7 +521,10 @@ namespace XOI_Integration.DataverseRepository.Operations
         // The plugin fires for whichever booking was edited, so a nomination found here
         // is the freshest statement of intent — it is read before the job-wide lookup
         // below, which avoids having to guess which of several nominations is newest.
-        public static string GetXOiJobOwnerEmail(Guid bookingId)
+        // The logger is optional so the deep-link rewrite can keep calling this without
+        // one. Every branch returns null, and the three reasons are indistinguishable
+        // from the outside, so each says which one it was.
+        public static string GetXOiJobOwnerEmail(Guid bookingId, ILogger log = null)
         {
             var booking = DataverseApi.Instance.Retrieve(
                 "bookableresourcebooking",
@@ -529,13 +532,31 @@ namespace XOI_Integration.DataverseRepository.Operations
                 new ColumnSet("acl_xoijobowner")
             );
 
+            if (!booking.Contains("acl_xoijobowner"))
+            {
+                log?.LogInformation($"Booking {bookingId} returned no acl_xoijobowner attribute — field unreadable or not on this record.");
+                return null;
+            }
+
             var ownerRef = booking.GetAttributeValue<EntityReference>("acl_xoijobowner");
             if (ownerRef == null)
+            {
+                log?.LogInformation($"Booking {bookingId} has no XOi Job Owner nominated.");
                 return null;
+            }
+
+            log?.LogInformation($"Booking {bookingId} nominates XOi Job Owner resource {ownerRef.Id} ({ownerRef.Name ?? "unnamed"}).");
 
             string email = GetTechnicianInfoFromResource(ownerRef.Id).Email;
 
-            return string.IsNullOrWhiteSpace(email) ? null : email;
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                log?.LogWarning($"Nominated resource {ownerRef.Id} on booking {bookingId} resolves to no user email — falling back.");
+                return null;
+            }
+
+            log?.LogInformation($"Booking {bookingId} nomination resolved to {email}.");
+            return email;
         }
 
         // Job-wide owner resolution — the fallback used when the edited booking carries
