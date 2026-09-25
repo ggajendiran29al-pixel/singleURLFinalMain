@@ -30,6 +30,23 @@ public class XOiToBookableResourceDataHandler
 
         try
         {
+            //GG added on 9/24/2026
+            // ====================================================
+            // 0. SET WORK ORDER XOi JOB OWNER FROM FIRST BOOKING
+            // ====================================================
+            // Isolated try/catch: an owner-sync problem must never block XOi job creation.
+            if (jobRelatedData.WorkOrderId != Guid.Empty)
+            {
+                try
+                {
+                    await BookableResourceBookingOperation
+                        .SetWorkOrderOwnerFromFirstBookingAsync(_log, jobRelatedData.WorkOrderId);
+                }
+                catch (Exception ownerEx)
+                {
+                    _log.LogError(ownerEx, "Setting work order XOi job owner failed — continuing.");
+                }
+            }
             // ====================================================
             // 1. CREATE or UPDATE JOB IN XOi
             // ====================================================
