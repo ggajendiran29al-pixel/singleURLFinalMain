@@ -1024,6 +1024,84 @@ namespace XOI_Integration.DataverseRepository.Operations
             log.LogInformation($"ResolveBookingByTechnicianAndDate → FALLBACK (closest starttime) → booking {fallbackSelected.Id} (start: {fallbackSelected.Start?.ToString("o") ?? "null"}, owner: '{fallbackSelected.OwnerEmail}')");
             return fallbackSelected.Id;
         }
+        //GG added on 9/24/2026
+        // =========================================================
+        // SET WORK ORDER XOi JOB OWNER FROM FIRST BOOKING
+        // =========================================================
+        // The first booking created on a work order decides its XOi job owner: that booking's
+        // resource is written to msdyn_workorder.acl_xoijobowner. If the work order already has
+        // an owner (set earlier, or nominated manually by a dispatcher) it is left untouched,
+        // so later bookings never overwrite it and the update cannot re-trigger itself.
+        public static async Task SetWorkOrderOwnerFromFirstBookingAsync(ILogger log, Guid workOrderId)
+        {
+            const string BOOKING_ENTITY = "bookableresourcebooking";
+            const string WORK_ORDER_ENTITY = "msdyn_workorder";
+            const string WO_OWNER_FIELD = "acl_xoijobowner";
+            const string RESOURCE_FIELD = "resource";
+
+            if (workOrderId == Guid.Empty)
+            {
+                log.LogWarning("SetWorkOrderOwnerFromFirstBooking — empty work order id, skipping.");
+                return;
+            }
+
+            // 1. Work order already has an owner? Then do nothing.
+            var workOrder = await Task.Run(() =>
+                DataverseApi.Instance.Retrieve(
+                    WORK_ORDER_ENTITY,
+                    workOrderId,
+                    new ColumnSet(WO_OWNER_FIELD)
+                ));
+
+            if (workOrder.GetAttributeValue<EntityReference>(WO_OWNER_FIELD) != null)
+            {
+                log.LogInformation($"Work order {workOrderId} already has an XOi job owner — skipped.");
+                return;
+            }
+
+            // 2. Find the FIRST booking (oldest createdon) on this work order that has a resource.
+            QueryExpression query = new QueryExpression(BOOKING_ENTITY)
+            {
+                ColumnSet = new ColumnSet(RESOURCE_FIELD, "createdon"),
+                TopCount = 1,
+                Criteria = new FilterExpression
+                {
+                    Conditions =
+            {
+                new ConditionExpression("msdyn_workorder", ConditionOperator.Equal, workOrderId),
+                new ConditionExpression(RESOURCE_FIELD, ConditionOperator.NotNull)
+            }
+                },
+                Orders =
+        {
+            new OrderExpression("createdon", OrderType.Ascending)
+        }
+            };
+
+            var response = await DataverseApi.Instance.RetrieveMultipleAsync(query);
+            var firstBooking = response.Entities.FirstOrDefault();
+
+            if (firstBooking == null)
+            {
+                log.LogInformation($"Work order {workOrderId} has no booking with a resource yet — nothing to set.");
+                return;
+            }
+
+            var resourceRef = firstBooking.GetAttributeValue<EntityReference>(RESOURCE_FIELD);
+            if (resourceRef == null)
+                return;
+
+            // 3. Write the booking's resource onto the work order.
+            Entity update = new Entity(WORK_ORDER_ENTITY, workOrderId)
+            {
+                [WO_OWNER_FIELD] = new EntityReference("bookableresource", resourceRef.Id)
+            };
+
+            await DataverseApi.Instance.UpdateAsync(update);
+
+            log.LogInformation(
+                $"Work order {workOrderId} XOi job owner set to resource {resourceRef.Id} ({resourceRef.Name ?? "unnamed"}) from first booking {firstBooking.Id}.");
+        }
 
     }
 }

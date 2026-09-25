@@ -40,6 +40,24 @@ namespace XOI_Integration
 
             log.LogInformation($"Booking type — WorkOrder: {isWorkOrder}, Project: {isProject}");
 
+            //GG added on 9/24/2026 delete after trigger the exciting data.
+            // Set the work order's XOi job owner from its first booking's resource.
+            // Runs on every trigger (before the reuse/create branches, which return early).
+            // Idempotent: skips when the work order already has an owner.
+            if (isWorkOrder)
+            {
+                try
+                {
+                    await BookableResourceBookingOperation
+                        .SetWorkOrderOwnerFromFirstBookingAsync(log, jobData.WorkOrderId);
+                }
+                catch (Exception ex)
+                {
+                    // An owner-sync problem must never block the XOi job flow
+                    log.LogError(ex, "Setting work order XOi job owner failed — continuing.");
+                }
+            }
+
             // 1️⃣ Check if parent entity already has an XOi job
             string existingJobId = null;
 
