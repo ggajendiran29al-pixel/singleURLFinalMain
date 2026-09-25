@@ -40,11 +40,22 @@ namespace XOI_Integration
 
             log.LogInformation($"Booking type — WorkOrder: {isWorkOrder}, Project: {isProject}");
 
-            //GG added on 9/24/2026 delete after trigger the exciting data.
-            // Set the work order's XOi job owner from its first booking's resource.
-            // Runs on every trigger (before the reuse/create branches, which return early).
-            // Idempotent: skips when the work order already has an owner.
-            if (isWorkOrder)
+            //GG added on 9/24/2026
+            // Backfill path for work orders that predate the XOi Job Owner field. Running
+            // the sync here — ahead of the reuse and create branches, which both return
+            // early — means touching an existing booking is enough to populate its work
+            // order, which is how older records get filled in bulk.
+            //
+            // Gated, because a bulk booking update also drags the rest of this function
+            // along: a getJob per booking and an updateJob wherever the resolved owner
+            // differs from what XOi holds. Off by default so production is unchanged
+            // until EnableWorkOrderOwnerBackfill is set, and switching it back off needs
+            // no deployment.
+            //
+            // The first-booking path in XOiToBookableResourceDataHandler is deliberately
+            // NOT gated — that is the permanent behaviour and must keep working when this
+            // is off.
+            if (isWorkOrder && IsWorkOrderOwnerBackfillEnabled())
             {
                 try
                 {
@@ -185,6 +196,18 @@ namespace XOI_Integration
             await IntegrationLogOperation.CreateLogAsync(bookingId, xData);
 
             log.LogInformation("XoiToCEWorkOrderJobShare completed");
+        }
+
+        // Read fresh on every call, like ExcludedWorkflowNames, so the app setting can be
+        // flipped without a redeploy. Absent or any value other than "true" means off.
+        private static bool IsWorkOrderOwnerBackfillEnabled()
+        {
+            return string.Equals(
+                Environment.GetEnvironmentVariable(
+                    "EnableWorkOrderOwnerBackfill",
+                    EnvironmentVariableTarget.Process),
+                "true",
+                StringComparison.OrdinalIgnoreCase);
         }
     }
 }
