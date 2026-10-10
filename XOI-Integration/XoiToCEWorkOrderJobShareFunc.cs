@@ -198,7 +198,7 @@ namespace XOI_Integration
             log.LogInformation("XoiToCEWorkOrderJobShare completed");
         }
 
-        // Read fresh on every call, like ExcludedWorkflowNames, so the app setting can be
+        // Read fresh on every call, like DefaultAssetCategory, so the app setting can be
         // flipped without a redeploy. Absent or any value other than "true" means off.
         private static bool IsWorkOrderOwnerBackfillEnabled()
         {
