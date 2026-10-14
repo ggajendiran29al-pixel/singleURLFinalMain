@@ -18,7 +18,7 @@ namespace XOI_Integration.DataverseRepository.Operations
     public static class XOiWorkflowSetupOperation
     {
         private const string SETUP_ENTITY = "acl_xoiworkflowsetup";
-        private const string SETUP_NAME = "acl_name";
+        private const string SETUP_NAME = "acl_Name";
         private const string SETUP_COMPANY = "acl_company";
 
         private const string BOOKING_ENTITY = "bookableresourcebooking";
@@ -75,9 +75,7 @@ namespace XOI_Integration.DataverseRepository.Operations
 
                 foreach (var row in result.Entities)
                 {
-                    // Rows are hand-entered, so trim before comparing — a trailing space
-                    // would otherwise make a row that looks correct never match.
-                    var name = row.GetAttributeValue<string>(SETUP_NAME)?.Trim();
+                    var name = ReadWorkflowName(row);
                     if (!string.IsNullOrEmpty(name))
                         excluded.Add(name);
                 }
@@ -93,6 +91,28 @@ namespace XOI_Integration.DataverseRepository.Operations
                     $"XOi Workflow Setup lookup failed for job {xOiJobId} — nothing excluded, workflows will sync.");
                 return excluded;
             }
+        }
+
+        /// <summary>
+        /// Reads the workflow name from a setup row without depending on the casing of
+        /// SETUP_NAME. ColumnSet and ConditionExpression resolve attribute names server
+        /// side and accept either casing, but the Attributes collection that comes back is
+        /// keyed by the lower case logical name and looked up case sensitively — so asking
+        /// for a schema name like "acl_Name" directly would return null, and every row
+        /// would be skipped silently with nothing excluded.
+        ///
+        /// Rows are hand-entered, so the value is trimmed: a trailing space would
+        /// otherwise stop a row that looks correct from ever matching.
+        /// </summary>
+        private static string ReadWorkflowName(Entity row)
+        {
+            if (row.Attributes.TryGetValue(SETUP_NAME, out var exact))
+                return (exact as string)?.Trim();
+
+            var match = row.Attributes
+                .FirstOrDefault(a => string.Equals(a.Key, SETUP_NAME, StringComparison.OrdinalIgnoreCase));
+
+            return (match.Value as string)?.Trim();
         }
 
         /// <summary>
