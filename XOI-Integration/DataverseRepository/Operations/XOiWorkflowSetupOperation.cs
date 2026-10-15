@@ -18,7 +18,15 @@ namespace XOI_Integration.DataverseRepository.Operations
     public static class XOiWorkflowSetupOperation
     {
         private const string SETUP_ENTITY = "acl_xoiworkflowsetup";
+
+        // The field's schema name, as created in Dataverse.
         private const string SETUP_NAME = "acl_Name";
+
+        // Its logical name — the lower-cased form the platform stores and the only one a
+        // query is guaranteed to resolve. Reads go through ReadWorkflowName, which accepts
+        // either casing, so the two constants cannot drift into a silent empty result.
+        private const string SETUP_NAME_LOGICAL = "acl_name";
+
         private const string SETUP_COMPANY = "acl_company";
 
         private const string BOOKING_ENTITY = "bookableresourcebooking";
@@ -51,15 +59,25 @@ namespace XOI_Integration.DataverseRepository.Operations
                 return excluded;
             }
 
+            // Named so a failure says which query threw. The previous version logged the
+            // exception only through LogWarning's structured parameter, which this log view
+            // does not render — so a failure said nothing about its own cause.
+            string step = "resolving company from job id";
+
             try
             {
                 var companyRef = await GetCompanyForXOiJobAsync(log, xOiJobId);
                 if (companyRef == null)
                     return excluded;
 
+                step = $"reading {SETUP_ENTITY} rows for company {companyRef.Id}";
+
                 var query = new QueryExpression(SETUP_ENTITY)
                 {
-                    ColumnSet = new ColumnSet(SETUP_NAME),
+                    // Logical names, always lower case, are what the platform resolves in a
+                    // query regardless of how the field's schema name was typed. The read
+                    // below stays casing-tolerant, so the value is picked up either way.
+                    ColumnSet = new ColumnSet(SETUP_NAME_LOGICAL),
                     Criteria = new FilterExpression
                     {
                         Conditions =
@@ -87,8 +105,9 @@ namespace XOI_Integration.DataverseRepository.Operations
             }
             catch (Exception ex)
             {
-                log.LogWarning(ex,
-                    $"XOi Workflow Setup lookup failed for job {xOiJobId} — nothing excluded, workflows will sync.");
+                log.LogWarning(
+                    $"XOi Workflow Setup lookup failed for job {xOiJobId} while {step} — " +
+                    $"{ex.GetType().Name}: {ex.Message} — nothing excluded, workflows will sync.");
                 return excluded;
             }
         }
