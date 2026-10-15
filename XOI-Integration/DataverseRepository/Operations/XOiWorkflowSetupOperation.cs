@@ -35,7 +35,11 @@ namespace XOI_Integration.DataverseRepository.Operations
 
         private const string WORK_ORDER_ENTITY = "msdyn_workorder";
         private const string WORK_ORDER_ID = "msdyn_workorderid";
-        private const string WORK_ORDER_COMPANY = "cdm_company";
+
+        // The work order's legal entity lookup is sis_company — the field name, not the
+        // table it points at. It targets cdm_company, which is also what the setup table's
+        // acl_company targets, so the two EntityReference ids compare directly.
+        private const string WORK_ORDER_COMPANY = "sis_company";
 
         /// <summary>
         /// Workflow names excluded for the company that owns this XOi job, matched by the
@@ -136,7 +140,7 @@ namespace XOI_Integration.DataverseRepository.Operations
 
         /// <summary>
         /// Walks XOi job id to legal entity in one round trip:
-        /// booking (by sisps_xoi_vision_jobid) to msdyn_workorder to cdm_company.
+        /// booking (by sisps_xoi_vision_jobid) to msdyn_workorder to sis_company.
         /// Oldest booking wins, so the answer does not change between runs when several
         /// bookings share the job.
         /// </summary>
