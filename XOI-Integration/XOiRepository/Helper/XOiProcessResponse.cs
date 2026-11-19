@@ -150,16 +150,11 @@ namespace XOI_Integration.XOiRepository.Helper
                 if (summary?.Documentation == null)
                     return list;
 
-                // Resolved once for the whole response: the exclusion list belongs to the
-                // work order's legal entity, which is the same for every document here.
-                var excludedWorkflows =
-                    await XOiWorkflowSetupOperation.GetExcludedWorkflowNamesAsync(log, summary.JobId);
-
                 foreach (var doc in summary.Documentation)
                 {
-                    if (IsWorkflowExcludedFromSync(excludedWorkflows, doc.WorkflowName))
+                    if (IsWorkflowExcludedFromSync(doc.WorkflowName))
                     {
-                        var message = $"Workflow '{doc.WorkflowName}' excluded from FS asset sync per XOi Workflow Setup.";
+                        var message = $"Workflow '{doc.WorkflowName}' excluded from FS asset sync per ExcludedWorkflowNames configuration.";
                         log.LogInformation(message);
                         await IntegrationLogOperation.CreateAssetsLogAsync(summary.JobId, JobResponseResult.Success, OperationType.WorkflowExcluded, message);
                         continue;
@@ -199,13 +194,9 @@ namespace XOI_Integration.XOiRepository.Helper
                 var doc = summary.Documentation.FirstOrDefault();
                 var assignee = summary.Assignees?.FirstOrDefault();
 
-                var excludedWorkflows = doc == null
-                    ? null
-                    : await XOiWorkflowSetupOperation.GetExcludedWorkflowNamesAsync(log, summary.JobId);
-
-                if (doc != null && IsWorkflowExcludedFromSync(excludedWorkflows, doc.WorkflowName))
+                if (doc != null && IsWorkflowExcludedFromSync(doc.WorkflowName))
                 {
-                    var message = $"Workflow '{doc.WorkflowName}' excluded from FS booking note sync per XOi Workflow Setup.";
+                    var message = $"Workflow '{doc.WorkflowName}' excluded from FS booking note sync per ExcludedWorkflowNames configuration.";
                     log.LogInformation(message);
                     await IntegrationLogOperation.CreateAssetsLogAsync(summary.JobId, JobResponseResult.Success, OperationType.WorkflowExcluded, message);
                     log.LogInformation("Finish building XOi Work Summary data into a bookable resource data - no eligible workflows to sync");
@@ -229,23 +220,14 @@ namespace XOI_Integration.XOiRepository.Helper
             }
         }
 
-        // Matching is unchanged from the ExcludedWorkflowNames era — whole-string and
-        // case-insensitive, no wildcards — so a workflow excluded before stays excluded
-        // once its name is in the table against the right company. The set is built by
-        // XOiWorkflowSetupOperation with OrdinalIgnoreCase and already trimmed; the name
-        // from XOi is trimmed here because it arrives straight off the GraphQL response.
-        //
-        // Table rows can hold a comma, which the comma-separated app setting could not
-        // express at all.
-        private static bool IsWorkflowExcludedFromSync(HashSet<string> excludedWorkflows, string workflowName)
+        private static bool IsWorkflowExcludedFromSync(string workflowName)
         {
-            if (excludedWorkflows == null || excludedWorkflows.Count == 0)
-                return false;
+            var excludedWorkflowNames = Environment.GetEnvironmentVariable("ExcludedWorkflowNames", EnvironmentVariableTarget.Process)
+                ?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(name => name.Trim())
+                ?? Enumerable.Empty<string>();
 
-            if (string.IsNullOrWhiteSpace(workflowName))
-                return false;
-
-            return excludedWorkflows.Contains(workflowName.Trim());
+            return excludedWorkflowNames.Any(excluded => string.Equals(excluded, workflowName, StringComparison.OrdinalIgnoreCase));
         }
     }
 }
