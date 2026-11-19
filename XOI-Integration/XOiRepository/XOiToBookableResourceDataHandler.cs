@@ -28,6 +28,9 @@ public class XOiToBookableResourceDataHandler
         var xoiOp = new XOiOperation(_log);
         XOiToBookableResourceData result;
 
+        // Kept outside the try so the catch can still report a job XOi already created.
+        string jobId = null;
+
         try
         {
             //GG added on 9/24/2026
@@ -54,16 +57,35 @@ public class XOiToBookableResourceDataHandler
                 ? await xoiOp.CreateJobAsync(jobRelatedData)
                 : await xoiOp.UpdateJobAsync(jobRelatedData, existingJobId);
 
-            string jobId = result.XOiVisionJobId;
-
-            if (string.IsNullOrEmpty(jobId))
+            if (string.IsNullOrEmpty(result.XOiVisionJobId))
                 throw new Exception("XOi Vision Job ID was not returned by API.");
+
+            jobId = result.XOiVisionJobId;
 
             _log.LogInformation($"📌 XOi JobId received: {jobId}");
 
+            // The booking is written BEFORE the work order on purpose. Messages waiting on
+            // the job-creation claim are released the moment the work order shows the job
+            // ID, and they then look up the first booking by that ID to copy its details —
+            // so the booking must already carry it.
 
             // ====================================================
-            // 2. UPDATE WORK ORDER WITH JOB ID
+            // 2. UPDATE BOOKING WITH JOB ID + URL MODEL
+            // ====================================================
+            await BookableResourceBookingOperation.UpdateXOiJobIdOnBookingAsync(
+                bookingId,
+                jobId
+            );
+
+            _log.LogInformation("✔ Booking updated with XOi Job ID");
+
+            await BookableResourceBookingOperation.UpdateBookableResourceBookingAsync(
+                bookingId,
+                result
+            );
+
+            // ====================================================
+            // 3. UPDATE WORK ORDER WITH JOB ID
             // ====================================================
             if (jobRelatedData.WorkOrderId != Guid.Empty)
             {
@@ -79,21 +101,6 @@ public class XOiToBookableResourceDataHandler
                 _log.LogWarning("⚠ WorkOrderId was EMPTY - JobId was not stored on WorkOrder.");
             }
 
-            // ====================================================
-            // 3. UPDATE BOOKING WITH JOB ID + URL MODEL
-            // ====================================================
-            await BookableResourceBookingOperation.UpdateXOiJobIdOnBookingAsync(
-                bookingId,
-                jobId
-            );
-
-            _log.LogInformation("✔ Booking updated with XOi Job ID");
-
-            await BookableResourceBookingOperation.UpdateBookableResourceBookingAsync(
-                bookingId,
-                result
-            );
-
             // 03042026 Removed step 4: UpdateWebJobUrlOnBookingAsync was overwriting sisps_xoi_vision_webjoburl with ContributeToJob URL after it was correctly set in step 3
             _log.LogInformation("✅ Handler completed SUCCESSFULLY");
         }
@@ -106,7 +113,10 @@ public class XOiToBookableResourceDataHandler
                 operationType = operationType,
                 jobResponseResult = JobResponseResult.Failure,
                 Message = ex.Message,
-                XOiVisionJobId = (operationType == OperationType.Update ? existingJobId : null)
+                // If XOi already created the job and only a Dataverse write failed, keep its
+                // ID so the caller still stores it on the parent. Dropping it here used to
+                // orphan the job, and the next booking update created a second one.
+                XOiVisionJobId = jobId ?? (operationType == OperationType.Update ? existingJobId : null)
             };
         }
 
