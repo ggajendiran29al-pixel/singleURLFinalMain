@@ -266,10 +266,9 @@ using static Grpc.Core.Metadata;
                         new ColumnSet("acl_xoi_vision_jobid")
                     ));
 
-                if (entity != null && entity.Contains("acl_xoi_vision_jobid"))
-                    return (string)entity["acl_xoi_vision_jobid"];
-
-                return null;
+                // A PENDING claim marker means a job is being created, not that one exists
+                return XOI_Integration.DataverseRepository.Operations.XOiJobClaimOperation
+                    .RealJobIdOrNull(entity?.GetAttributeValue<string>("acl_xoi_vision_jobid"));
             }
 
         public static async Task UpdateXOiJobIdOnWorkOrderAsync(Guid workOrderId, string xOiJobId)

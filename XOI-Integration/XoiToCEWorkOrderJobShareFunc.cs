@@ -13,6 +13,7 @@ using XOI_Integration.DataverseRepository.Operations;
 using XOI_Integration.DataverseRepository.Provider;
 using XOI_Integration.Helper;
 using XOI_Integration.XOiRepository;
+using XOI_Integration.XOiRepository.XOiDataModels;
 
 namespace XOI_Integration
 {
@@ -76,6 +77,31 @@ namespace XOI_Integration
                 existingJobId = await WorkOrderOperation.GetXOiJobIdAsync(jobData.WorkOrderId);
             else if (isProject)
                 existingJobId = await ProjectOperation.GetXOiJobIdAsync(jobData.ProjectId);
+
+            // Only needed when the parent has no job yet; the reuse path below ignores them.
+            string bookingJobId = null;
+            OperationType operationType = OperationType.Update;
+            XOiJobClaimOperation.Claim claim = null;
+
+            if (string.IsNullOrEmpty(existingJobId))
+            {
+                bookingJobId = await BookableResourceBookingOperation.GetXOiJobIdAsync(bookingId);
+                operationType = XOiOperationType.DetermineOperationType(message, bookingJobId);
+
+                // Two messages for one work order (Create then Update, or two bookings created
+                // together) used to both reach createJob here and leave a duplicate job in
+                // XOi. Claim the parent first: one message wins and creates; the others wait
+                // for its job ID and take the reuse path instead.
+                if (operationType == OperationType.Create && (isWorkOrder || isProject))
+                {
+                    claim = await XOiJobClaimOperation.AcquireAsync(
+                        log,
+                        isWorkOrder ? "msdyn_workorder" : "sis_project",
+                        isWorkOrder ? jobData.WorkOrderId : jobData.ProjectId);
+
+                    existingJobId = claim.ExistingJobId;
+                }
+            }
 
             if (!string.IsNullOrEmpty(existingJobId))
             {
@@ -171,25 +197,35 @@ namespace XOI_Integration
             }
 
             // 2️⃣ Create new job
-            var bookingJobId = await BookableResourceBookingOperation.GetXOiJobIdAsync(bookingId);
+            XOiToBookableResourceData xData = null;
 
-            var operationType = XOiOperationType.DetermineOperationType(message, bookingJobId);
-
-            var handler = new XOiToBookableResourceDataHandler(log);
-            var xData = await handler.HandleXOiToBookableResourceDataAsync(
-                operationType,
-                jobData,
-                bookingId,
-                bookingJobId
-            );
-
-            // 3️⃣ Store XOi job ID on parent entity for reuse by subsequent bookings
-            if (!string.IsNullOrEmpty(xData?.XOiVisionJobId))
+            try
             {
-                if (isWorkOrder)
-                    await WorkOrderOperation.UpdateXOiJobIdOnWorkOrderAsync(jobData.WorkOrderId, xData.XOiVisionJobId);
-                else if (isProject)
-                    await ProjectOperation.UpdateXOiJobIdOnProjectAsync(jobData.ProjectId, xData.XOiVisionJobId);
+                var handler = new XOiToBookableResourceDataHandler(log);
+                xData = await handler.HandleXOiToBookableResourceDataAsync(
+                    operationType,
+                    jobData,
+                    bookingId,
+                    bookingJobId
+                );
+
+                // 3️⃣ Store XOi job ID on parent entity for reuse by subsequent bookings.
+                // This also replaces the claim marker, which releases any waiting messages.
+                if (!string.IsNullOrEmpty(xData?.XOiVisionJobId))
+                {
+                    if (isWorkOrder)
+                        await WorkOrderOperation.UpdateXOiJobIdOnWorkOrderAsync(jobData.WorkOrderId, xData.XOiVisionJobId);
+                    else if (isProject)
+                        await ProjectOperation.UpdateXOiJobIdOnProjectAsync(jobData.ProjectId, xData.XOiVisionJobId);
+                }
+            }
+            finally
+            {
+                // No job came back (createJob failed), so give the claim up rather than make
+                // the next message wait for it to go stale. When a job ID did come back the
+                // marker is left alone — it has been, or must be, overwritten by that ID.
+                if (claim?.Acquired == true && string.IsNullOrEmpty(xData?.XOiVisionJobId))
+                    await XOiJobClaimOperation.ReleaseAsync(log, claim);
             }
 
             log.LogInformation("Create integration logs");

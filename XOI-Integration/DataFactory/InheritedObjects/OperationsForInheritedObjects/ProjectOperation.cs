@@ -175,7 +175,9 @@ namespace XOI_Integration.DataFactory.InheritedObjects.OperationsForInheritedObj
                     new Microsoft.Xrm.Sdk.Query.ColumnSet("acl_xoi_vision_jobid")
                 ));
 
-            return entity?.GetAttributeValue<string>("acl_xoi_vision_jobid");
+            // A PENDING claim marker means a job is being created, not that one exists
+            return XOI_Integration.DataverseRepository.Operations.XOiJobClaimOperation
+                .RealJobIdOrNull(entity?.GetAttributeValue<string>("acl_xoi_vision_jobid"));
         }
 
         public static async Task UpdateXOiJobIdOnProjectAsync(Guid projectId, string xOiJobId)

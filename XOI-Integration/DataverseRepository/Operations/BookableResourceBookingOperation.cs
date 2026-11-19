@@ -187,8 +187,12 @@ namespace XOI_Integration.DataverseRepository.Operations
                         new ColumnSet("acl_xoi_vision_jobid")
                     ));
 
-                if (workOrder?.Contains("acl_xoi_vision_jobid") == true)
-                    return (string)workOrder["acl_xoi_vision_jobid"];
+                // A PENDING claim marker means a job is being created, not that one exists
+                string woJobId = XOiJobClaimOperation.RealJobIdOrNull(
+                    workOrder?.GetAttributeValue<string>("acl_xoi_vision_jobid"));
+
+                if (woJobId != null)
+                    return woJobId;
             }
 
             return null;
